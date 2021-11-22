@@ -1,2 +1,1 @@
-# cse507
-Verifiable Prescriptions Group Project
+# Verifiable Prescriptions in Rosette
