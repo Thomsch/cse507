@@ -1,5 +1,7 @@
 #lang rosette
 
+(require "utils.rkt")
+
 ;;; Prescription Verification and Synthesis Library ;;;
 
 ; Design considerations:
@@ -78,7 +80,7 @@
     [ `('and ,c)
       (apply && (map (curry drugs-conflict patient medications) c)) ]
     [ `(,drugs ...)
-      (apply && (map (λ (drug) (member drug medications)) drugs)) ]
+      (apply && (map (curry contains? medications) drugs)) ]
     ))
 
 ; A drug database contains our "universe" of information -- these
@@ -115,10 +117,10 @@
   (define ailments (patient-ailments patient))
 
   (define (query-drugs selector)
-    (apply append
-           (map (λ (drug-name)
-                  (selector (hash-ref drugs drug-name)))
-                prescription)))
+    (define all-results (map (λ (name)
+                               (selector (car (hash-ref drugs name))))
+                             prescription))
+    (apply append all-results))
 
   ; Note: naive implementation scans the whole conflict list, instead we probably want
   ; something with a dictionary that looks over just the conflicts of A.
@@ -131,7 +133,8 @@
 
   (define (treats-all)
     (define treated-list (query-drugs drug-ailments))
-    (apply && (map (λ (ailment) (member ailment treated-list)) ailments)))
+    (define each-treated (map (curry contains? treated-list) ailments))
+    (apply && each-treated))
 
   (define (patient-compatible)
     (define requirements-list (query-drugs drug-requirements))
@@ -153,37 +156,40 @@
 ; Abstract over DB creation + syntax.
 (define (make-database #:drugs drugs #:conflicts conflicts)
   ; Optimize here to construct hash tables to reduce the amount of comparisons.
-  (database drugs conflicts))
+  (define (drug-table)
+    (define assocs (map (λ (d) (list (drug-name d) d)) drugs))
+    (make-hash assocs))
+  (database (drug-table) conflicts))
 
 
 (define (lte a) (lambda (b) (<= b a)))
 (define (any-allergy . as)
   (λ (allergies)
-    (apply || (map (λ (a) (member a allergies)) as)) ))
+    (apply || (map (curry contains? allergies) as)) ))
 
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
 (define drug-database
   (make-database
    #:drugs (list
-            (drug 'A ('X) '())
-            (drug 'B ('Y) '())
-            (drug 'C ('Y 'Z) '())
-            (drug 'D ('W) '())
-            (drug 'E ('U) '())
+            (drug 'A '(X) '())
+            (drug 'B '(Y) '())
+            (drug 'C '(Y Z) '())
+            (drug 'D '(W) '())
+            (drug 'E '(U) '())
             )
    #:conflicts (list
                 (conflict 'A 'B '()) ; A and B unconditionally conflict.
-                (conflict 'A 'C '('E)) ; A and C conflict in the presence of E
+                (conflict 'A 'C '(E)) ; A and C conflict in the presence of E
                 (conflict 'C 'D  (any-allergy 'M 'N)) ; A and C conflict if patient has either allergy.
                 (conflict 'A 'D '('or ; A and D conflict if the patient is over age 50 and not taking C.
-                                  ('age (lte 50))
-                                  ('not ('C))))
+                                  ('age ,(lte 50))
+                                  ('not (C))))
                 )))
 
 
 (define (test)
-  (define marc (patient 42 '('K) ('X 'Y)))
+  (define marc (patient 42 '(K) '(X Y)))
   (define possible-prescription-1 '(A B))   ; Conflict
   (define possible-prescription-2 '(A D))   ; No conflict, but also doesn't fit the bill
   (define possible-prescription-3 '(A C E)) ; Transitive conflict
@@ -192,9 +198,6 @@
   (displayln (verify-prescription drug-database marc possible-prescription-1))
   (displayln (verify-prescription drug-database marc possible-prescription-2))
   (displayln (verify-prescription drug-database marc possible-prescription-3))
-  (displayln (verify-prescription drug-database marc possible-prescription-4))
-  )
+  (displayln (verify-prescription drug-database marc possible-prescription-4)))
 
 (test)
-
-(define ??? null)
