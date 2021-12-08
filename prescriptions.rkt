@@ -1,5 +1,6 @@
 #lang rosette
 
+(require rosette/lib/destruct)
 (require "utils.rkt")
 
 ;;; Prescription Verification and Synthesis Library ;;;
@@ -30,14 +31,23 @@
 
 ; Drugs have
 ; - a unique identifier
-; - a set of ailments that they treat
 ; - a set of unconditional requirements that must be met about
 ; the patient's conditions.
+; - an unstructured list of properties that can be referenced when defining
+; treatements programatically. Properties are usually symbols (e.g. 'ACE-Inhibitor, 'Diuretic)
 ;
-; Note: We treat the list of requirements as
-; a syntactic convenience for providing a *conjunction* of all
-; requirements in the list.
-(struct drug (name ailments requirements) #:transparent)
+; Notes:
+; - We treat the list of requirements as a syntactic convenience for providing a
+;   *conjunction* of all requirements in the list.
+(struct drug (name requirements properties) #:transparent)
+
+; A known treatment has
+; - A list of one or more ailments it treats
+; - A set of requirements about the patient to be applicable
+; - A formula depicting a drug combination that treats the ailments, i.e.
+;     drug A, drug A /\ drug B, drug A /\ (drug B \/ drug C), etc.
+(struct treatment (ailments requirements formula))
+
 
 ; A requirement can be any of following, where `f` is a predicate takes in
 ; a patient's information and returns true or false:
@@ -75,17 +85,18 @@
   (match (conflict-condition relation)
     [ `('requirement ,r) (satisfies-requirement patient r) ]
     [ `('not ,c) (not (drugs-conflict patient medications c)) ]
-    [ `('or ,c)
+    [ `('or ,c ...)
       (apply || (map (curry drugs-conflict patient medications) c)) ]
-    [ `('and ,c)
+    [ `('and ,c ...)
       (apply && (map (curry drugs-conflict patient medications) c)) ]
     [ `(,drugs ...)
       (apply && (map (curry contains? medications) drugs)) ]
     ))
 
 ; A drug database contains our "universe" of information -- these
-; are all of the drugs we know about, and all of the known conflicts
-; in-between them.
+; are all of the drugs we know about, all of the known conflicts
+; in-between them, and all of the known treatments we have for different
+; ailments making use of these drugs.
 ;
 ; Idea: while all "conflicts" in the database must be concrete conflict
 ; triples, we can expose a DSL front-end that allows us to define conflicts
@@ -93,11 +104,33 @@
 ; any drug B that has some active ingredient J under certain conditions. Then
 ; this predicate is evaluated against each drug B != A in the database to create
 ; the relations. (This may be a reasonable way to generate data-sets.)
-(struct database (drugs conflicts) #:transparent)
+(struct database (drugs conflicts treatments))
 
-; From here, we can indeed write a procedure to verify a candidate
-; prescription, here defined as a set of drugs, for a given patient.
-; We assume the presence of a drug database,
+; We can check if a prescription (defined as a set of drugs) satisfies a formula to
+; constitute a valid treatment application for a given patient/ailment combination:
+(define (treats-ailment treatment patient prescription ailment)
+  (and
+   ; The ailment is actually contained within the list of ailments this treatment treats
+   (contains? (treatment-ailments treatment) ailment)
+
+   ; Patients satisfy all of the requirements for the treatment to apply
+   (apply && (map (curry satisfies-requirement patient) (treatment-requirements treatment)))
+
+   ; The prescription actually satisfied the treatment's requirements.
+   (begin
+     (define (satisfies-formula prescription formula)
+       (match formula
+         [ `('not ,f) (not (satisfies-formula prescription f)) ]
+         [ `('or ,f ...) (apply || (map (curry satisfies-formula prescription) f)) ]
+         [ `('and ,f ...) (apply && (map (curry satisfies-formula prescription) f)) ]
+         [ `(,drugs ...) (apply && (map (curry contains? prescription) drugs)) ]
+         ))
+     (satisfies-formula prescription (treatment-formula treatment)))
+   ))
+
+
+; Finally, we can write a procedure to verify a candidate prescription for a given patient.
+; We assume the presence of a drug database.
 ;
 ; A valid prescription (list of drug-names) must satisfiy the following conditions:
 ; - Treat all of the patient's ailments.
@@ -111,55 +144,65 @@
 ;       property of its dosage. This changes nothing for verification, but makes synthesis more
 ;       challenging since now a synthesized prescription must come up with a model of reals (dosages)
 ;       for each drug as well as a boolean prescribed/not-prescribed.
-(define (verify-prescription database patient prescription)
-  (define drugs (database-drugs database))
-  (define conflicts (database-conflicts database))
-  (define ailments (patient-ailments patient))
+(define (verify-prescription drug-database patient prescription)
+  (destruct
+   drug-database
+   [(database drugs conflicts treatments)
+    (begin
+      (define ailments (patient-ailments patient))
 
-  (define (query-drugs selector)
-    (define all-results (map (λ (name)
-                               (selector (car (hash-ref drugs name))))
-                             prescription))
-    (apply append all-results))
+      (define (query-drugs selector)
+        (define all-results (map (λ (name)
+                                   (selector (car (hash-ref drugs name))))
+                                 prescription))
+        (apply append all-results))
 
-  ; Note: naive implementation scans the whole conflict list, instead we probably want
-  ; something with a dictionary that looks over just the conflicts of A.
-  ; Since `conflicts(A,B) <=> conflicts(B,A)`, we can safely ignore the case where a
-  ; conflict is only registered in one direction, since we will always check both.
-  (define (query-conflicts a b)
-    (filter (λ (c)
-              (&& (equal? (conflict-A c) a) (equal? (conflict-B c) b)))
-            conflicts))
+      ; Note: naive implementation scans the whole conflict list, instead we probably want
+      ; something with a dictionary that looks over just the conflicts of A.
+      ; Since `conflicts(A,B) <=> conflicts(B,A)`, we can safely ignore the case where a
+      ; conflict is only registered in one direction, since we will always check both.
+      (define (query-conflicts a b)
+        (filter (λ (c)
+                  (&& (equal? (conflict-A c) a) (equal? (conflict-B c) b)))
+                conflicts))
 
-  (define (treats-all)
-    (define treated-list (query-drugs drug-ailments))
-    (define each-treated (map (curry contains? treated-list) ailments))
-    (apply && each-treated))
+      (define (treats-all)
+        ; Check that for each ailment the patient has, there is some known treatment
+        ; that is applicable via this patient/prescription combination.
+        (apply &&
+               (map
+                (λ (ailment)
+                  (apply ||
+                         (map (λ (treatment)
+                                (treats-ailment treatment patient prescription ailment))
+                              treatments)))
+                ailments)))
 
-  (define (patient-compatible)
-    (define requirements-list (query-drugs drug-requirements))
-    (apply && (map (curry satisfies-requirement patient) requirements-list)))
+      (define (patient-compatible)
+        (define requirements-list (query-drugs drug-requirements))
+        (apply && (map (curry satisfies-requirement patient) requirements-list)))
 
-  ; Futher optimization: fast exit on first failure since we know it's inconsistent.
-  (define (internally-consistent)
-    (apply &&
-           (for*/list ([a prescription]
-                       [b prescription])
-             ; Query all of the relations from the database
-             (define relations (query-conflicts a b))
-             ; No pairs of drugs causes a conflicts.
-             (not (apply || (map (curry drugs-conflict patient prescription) relations))))))
+      ; Futher optimization: fast exit on first failure since we know it's inconsistent.
+      (define (internally-consistent)
+        (apply &&
+               (for*/list ([a prescription]
+                           [b prescription])
+                 ; Query all of the relations from the database
+                 (define relations (query-conflicts a b))
+                 ; No pairs of drugs causes a conflicts.
+                 (not (apply || (map (curry drugs-conflict patient prescription) relations))))))
 
-  ; Short circuit evaluation if a prior condition is false.
-  (and (treats-all) (patient-compatible) (internally-consistent)))
+      ; Short circuit evaluation if a prior condition is false.
+      (and (treats-all) (patient-compatible) (internally-consistent)))
+    ]))
 
 ; Abstract over DB creation + syntax.
-(define (make-database #:drugs drugs #:conflicts conflicts)
+(define (make-database #:drugs drugs #:conflicts conflicts #:treatments treatments)
   ; Optimize here to construct hash tables to reduce the amount of comparisons.
   (define (drug-table)
     (define assocs (map (λ (d) (list (drug-name d) d)) drugs))
     (make-hash assocs))
-  (database (drug-table) conflicts))
+  (database (drug-table) conflicts treatments))
 
 
 (define (lte a) (lambda (b) (<= b a)))
