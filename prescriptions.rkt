@@ -278,7 +278,31 @@
   (displayln (verify-prescription drug-database marc possible-prescription-2))
   (displayln (verify-prescription drug-database marc possible-prescription-3))
   (displayln (verify-prescription drug-database marc possible-prescription-4))
-  (displayln (verify-prescription drug-database marc possible-prescription-5))
-  )
+  (displayln (verify-prescription drug-database marc possible-prescription-5)))
+
+(define (test-permutations)
+  (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
+
+  ; For testing purposes, we want to see if our verifier returns true/false on any
+  ; possible permutation of input prescriptions. Lightly modified from:
+  ; https://stackoverflow.com/questions/20622945/how-to-do-a-powerset-in-drracket/20623487
+  (define (powerset aL)
+    (if (empty? aL) '(())
+        (let ([rst (powerset (rest aL))])
+          (append (map (λ (x) (cons (first aL) x)) rst) rst))))
+
+  (define all-possible-prescriptions (powerset '(A B C D E)))
+  (define check (curry verify-prescription drug-database marc))
+
+
+  (define valid-prescriptions
+    (filter (λ (p)
+              (define result (check p))
+              (printf "~a: ~a\n" p result)
+              result)
+            all-possible-prescriptions))
+  ; And indeed, we see that only ACD and AC are valid prescriptions :)
+  (printf "VALID PRESCRIPTIONS: ~a\n" valid-prescriptions))
 
 (test)
+(test-permutations)
