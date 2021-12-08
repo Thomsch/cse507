@@ -40,7 +40,7 @@
 ; A requirement can be any of following, where `f` is a predicate takes in
 ; a patient's information and returns true or false:
 '('age f)
-'('allergies f)
+'('allergy f)
 '('not requirement)
 '('and a b ...)
 '('or a b ...)
@@ -49,7 +49,7 @@
 (define (satisfies-requirement patient requirement)
   (match requirement
     [ `('age ,f) (f (patient-age patient))]
-    [ `('allergies ,f) (f (patient-allergies patient))]
+    [ `('allergy ,f) (f (patient-allergies patient))]
     [ `('not ,r) (not (satisfies-requirement patient r)) ]
     [ `('or ,a ...)  (apply || (map (curry satisfies-requirement patient) a)) ]
     [ `('and ,a ...)  (apply && (map (curry satisfies-requirement patient) a)) ]
@@ -57,7 +57,7 @@
 
 ; A conflict relation says that drug A conflicts with drug B,
 ; if the condition is true for a given patient and drug list.
-(struct conflict (condition A B) #:transparent)
+(struct conflict (A B condition) #:transparent)
 
 ; A condition extends the `requirement` type with the ability to specify
 ; other drugs, which are interepreted as "true" values if the patient is taking a
@@ -103,7 +103,13 @@
 ; - Be internally consistent -- no drugs can conflict with each other.
 ;
 ; We assume prescriptions are well-formed, i.e. that all drugs are present in the database.
-(define (verify-prescriptions database patient prescription)
+;
+; Idea: we can extend the notion of a presecription to include dosage and time, and parameterize
+;       conflicts between drugs not just on the presence of another drug, but also on some
+;       property of its dosage. This changes nothing for verification, but makes synthesis more
+;       challenging since now a synthesized prescription must come up with a model of reals (dosages)
+;       for each drug as well as a boolean prescribed/not-prescribed.
+(define (verify-prescription database patient prescription)
   (define drugs (database-drugs database))
   (define conflicts (database-conflicts database))
   (define ailments (patient-ailments patient))
@@ -131,7 +137,6 @@
     (define requirements-list (query-drugs drug-requirements))
     (apply && (map (curry satisfies-requirement patient) requirements-list)))
 
-
   ; Futher optimization: fast exit on first failure since we know it's inconsistent.
   (define (internally-consistent)
     (apply &&
@@ -145,9 +150,51 @@
   ; Short circuit evaluation if a prior condition is false.
   (and (treats-all) (patient-compatible) (internally-consistent)))
 
+; Abstract over DB creation + syntax.
+(define (make-database #:drugs drugs #:conflicts conflicts)
+  ; Optimize here to construct hash tables to reduce the amount of comparisons.
+  (database drugs conflicts))
+
+
+(define (lte a) (lambda (b) (<= b a)))
+(define (any-allergy . as)
+  (λ (allergies)
+    (apply || (map (λ (a) (member a allergies)) as)) ))
 
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
-(define drug-database (database ??? ???))
+(define drug-database
+  (make-database
+   #:drugs (list
+            (drug 'A ('X) '())
+            (drug 'B ('Y) '())
+            (drug 'C ('Y 'Z) '())
+            (drug 'D ('W) '())
+            (drug 'E ('U) '())
+            )
+   #:conflicts (list
+                (conflict 'A 'B '()) ; A and B unconditionally conflict.
+                (conflict 'A 'C '('E)) ; A and C conflict in the presence of E
+                (conflict 'C 'D  (any-allergy 'M 'N)) ; A and C conflict if patient has either allergy.
+                (conflict 'A 'D '('or ; A and D conflict if the patient is over age 50 and not taking C.
+                                  ('age (lte 50))
+                                  ('not ('C))))
+                )))
+
+
+(define (test)
+  (define marc (patient 42 '('K) ('X 'Y)))
+  (define possible-prescription-1 '(A B))   ; Conflict
+  (define possible-prescription-2 '(A D))   ; No conflict, but also doesn't fit the bill
+  (define possible-prescription-3 '(A C E)) ; Transitive conflict
+  (define possible-prescription-4 '(A C))   ; Treats X and Y, no conflict. Ship it!
+
+  (displayln (verify-prescription drug-database marc possible-prescription-1))
+  (displayln (verify-prescription drug-database marc possible-prescription-2))
+  (displayln (verify-prescription drug-database marc possible-prescription-3))
+  (displayln (verify-prescription drug-database marc possible-prescription-4))
+  )
+
+(test)
 
 (define ??? null)
