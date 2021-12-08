@@ -1,5 +1,6 @@
 #lang rosette
 
+(require rosette/lib/destruct)
 (require "utils.rkt")
 
 ;;; Prescription Verification and Synthesis Library ;;;
@@ -30,14 +31,23 @@
 
 ; Drugs have
 ; - a unique identifier
-; - a set of ailments that they treat
 ; - a set of unconditional requirements that must be met about
 ; the patient's conditions.
+; - an unstructured list of properties that can be referenced when defining
+; treatements programatically. Properties are usually symbols (e.g. 'ACE-Inhibitor, 'Diuretic)
 ;
-; Note: We treat the list of requirements as
-; a syntactic convenience for providing a *conjunction* of all
-; requirements in the list.
-(struct drug (name ailments requirements) #:transparent)
+; Notes:
+; - We treat the list of requirements as a syntactic convenience for providing a
+;   *conjunction* of all requirements in the list.
+(struct drug (name requirements properties) #:transparent)
+
+; A known treatment has
+; - A list of one or more ailments it treats
+; - A set of requirements about the patient to be applicable
+; - A formula depicting a drug combination that treats the ailments, i.e.
+;     drug A, drug A /\ drug B, drug A /\ (drug B \/ drug C), etc.
+(struct treatment (ailments requirements formula))
+
 
 ; A requirement can be any of following, where `f` is a predicate takes in
 ; a patient's information and returns true or false:
@@ -49,6 +59,7 @@
 
 ; This definition admits the following verifier:
 (define (satisfies-requirement patient requirement)
+  ; (printf "SATISFIES? ~a\n" requirement)
   (match requirement
     [ `('age ,f) (f (patient-age patient))]
     [ `('allergy ,f) (f (patient-allergies patient))]
@@ -71,21 +82,33 @@
 ; drugs conflict given a patient and existing series of drugs.
 ; (Note, this does not check if adding either of the two drugs to the
 ;  medications list would cause conflicts to occur with any there.)
-(define (drugs-conflict patient medications relation)
-  (match (conflict-condition relation)
-    [ `('requirement ,r) (satisfies-requirement patient r) ]
-    [ `('not ,c) (not (drugs-conflict patient medications c)) ]
-    [ `('or ,c)
-      (apply || (map (curry drugs-conflict patient medications) c)) ]
-    [ `('and ,c)
-      (apply && (map (curry drugs-conflict patient medications) c)) ]
-    [ `(,drugs ...)
-      (apply && (map (curry contains? medications) drugs)) ]
-    ))
+(define (drugs-conflict patient medications condition)
+  ; (printf "\t\tConflict? ~a\n" condition)
+  (define result
+    (match condition
+      [ `('requirement ,r)
+        ; (displayln "\t\t\tREQUIREMENT")
+        (satisfies-requirement patient r) ]
+      [ `('not ,c)
+        ; (displayln "\t\t\tNOT")
+        (not (drugs-conflict patient medications c)) ]
+      [ `('or ,c ...)
+        ; (displayln "\t\t\tOR")
+        (apply || (map (curry drugs-conflict patient medications) c)) ]
+      [ `('and ,c ...)
+        ; (displayln "\t\t\tAND")
+        (apply && (map (curry drugs-conflict patient medications) c)) ]
+      [ `(,drugs ...)
+        ; (displayln "\t\t\tGENERIC")
+        (apply && (map (curry contains? medications) drugs)) ]
+      ))
+  ; (printf "\t\t\tResult ~a: ~a\n" condition result)
+  result)
 
 ; A drug database contains our "universe" of information -- these
-; are all of the drugs we know about, and all of the known conflicts
-; in-between them.
+; are all of the drugs we know about, all of the known conflicts
+; in-between them, and all of the known treatments we have for different
+; ailments making use of these drugs.
 ;
 ; Idea: while all "conflicts" in the database must be concrete conflict
 ; triples, we can expose a DSL front-end that allows us to define conflicts
@@ -93,11 +116,33 @@
 ; any drug B that has some active ingredient J under certain conditions. Then
 ; this predicate is evaluated against each drug B != A in the database to create
 ; the relations. (This may be a reasonable way to generate data-sets.)
-(struct database (drugs conflicts) #:transparent)
+(struct database (drugs conflicts treatments))
 
-; From here, we can indeed write a procedure to verify a candidate
-; prescription, here defined as a set of drugs, for a given patient.
-; We assume the presence of a drug database,
+; We can check if a prescription (defined as a set of drugs) satisfies a formula to
+; constitute a valid treatment application for a given patient/ailment combination:
+(define (treats-ailment treatment patient prescription ailment)
+  (and
+   ; The ailment is actually contained within the list of ailments this treatment treats
+   (contains? (treatment-ailments treatment) ailment)
+
+   ; Patients satisfy all of the requirements for the treatment to apply
+   (apply && (map (curry satisfies-requirement patient) (treatment-requirements treatment)))
+
+   ; The prescription actually satisfied the treatment's requirements.
+   (begin
+     (define (satisfies-formula prescription formula)
+       (match formula
+         [ `('not ,f) (not (satisfies-formula prescription f)) ]
+         [ `('or ,f ...) (apply || (map (curry satisfies-formula prescription) f)) ]
+         [ `('and ,f ...) (apply && (map (curry satisfies-formula prescription) f)) ]
+         [ `(,drugs ...) (apply && (map (curry contains? prescription) drugs)) ]
+         ))
+     (satisfies-formula prescription (treatment-formula treatment)))
+   ))
+
+
+; Finally, we can write a procedure to verify a candidate prescription for a given patient.
+; We assume the presence of a drug database.
 ;
 ; A valid prescription (list of drug-names) must satisfiy the following conditions:
 ; - Treat all of the patient's ailments.
@@ -111,81 +156,114 @@
 ;       property of its dosage. This changes nothing for verification, but makes synthesis more
 ;       challenging since now a synthesized prescription must come up with a model of reals (dosages)
 ;       for each drug as well as a boolean prescribed/not-prescribed.
-(define (verify-prescription database patient prescription)
-  (define drugs (database-drugs database))
-  (define conflicts (database-conflicts database))
-  (define ailments (patient-ailments patient))
+(define (verify-prescription drug-database patient prescription)
+  (destruct
+   drug-database
+   [(database drugs conflicts treatments)
+    (begin
+      (define ailments (patient-ailments patient))
 
-  (define (query-drugs selector)
-    (define all-results (map (λ (name)
-                               (selector (car (hash-ref drugs name))))
-                             prescription))
-    (apply append all-results))
+      (define (query-drugs selector)
+        (define all-results (map (λ (name)
+                                   (selector (car (hash-ref drugs name))))
+                                 prescription))
+        (apply append all-results))
 
-  ; Note: naive implementation scans the whole conflict list, instead we probably want
-  ; something with a dictionary that looks over just the conflicts of A.
-  ; Since `conflicts(A,B) <=> conflicts(B,A)`, we can safely ignore the case where a
-  ; conflict is only registered in one direction, since we will always check both.
-  (define (query-conflicts a b)
-    (filter (λ (c)
-              (&& (equal? (conflict-A c) a) (equal? (conflict-B c) b)))
-            conflicts))
+      ; Note: naive implementation scans the whole conflict list, instead we probably want
+      ; something with a dictionary that looks over just the conflicts of A.
+      ; Since `conflicts(A,B) <=> conflicts(B,A)`, we can safely ignore the case where a
+      ; conflict is only registered in one direction, since we will always check both.
+      (define (query-conflicts a b)
+        (filter (λ (c)
+                  (&& (equal? (conflict-A c) a) (equal? (conflict-B c) b)))
+                conflicts))
 
-  (define (treats-all)
-    (define treated-list (query-drugs drug-ailments))
-    (define each-treated (map (curry contains? treated-list) ailments))
-    (apply && each-treated))
+      (define (treats-all)
+        ; Check that for each ailment the patient has, there is some known treatment
+        ; that is applicable via this patient/prescription combination.
+        (apply &&
+               (map
+                (λ (ailment)
+                  (apply ||
+                         (map (λ (treatment)
+                                (treats-ailment treatment patient prescription ailment))
+                              treatments)))
+                ailments)))
 
-  (define (patient-compatible)
-    (define requirements-list (query-drugs drug-requirements))
-    (apply && (map (curry satisfies-requirement patient) requirements-list)))
+      (define (patient-compatible)
+        (define requirements-list (query-drugs drug-requirements))
+        (apply && (map (curry satisfies-requirement patient) requirements-list)))
 
-  ; Futher optimization: fast exit on first failure since we know it's inconsistent.
-  (define (internally-consistent)
-    (apply &&
-           (for*/list ([a prescription]
-                       [b prescription])
-             ; Query all of the relations from the database
-             (define relations (query-conflicts a b))
-             ; No pairs of drugs causes a conflicts.
-             (not (apply || (map (curry drugs-conflict patient prescription) relations))))))
+      ; Futher optimization: fast exit on first failure since we know it's inconsistent.
+      (define (internally-consistent)
+        (apply &&
+               (for*/list ([a prescription]
+                           [b prescription])
+                 ; Query all of the relations from the database
+                 (define relations (query-conflicts a b))
 
-  ; Short circuit evaluation if a prior condition is false.
-  (and (treats-all) (patient-compatible) (internally-consistent)))
+                 ; No pairs of drugs causes a conflicts.
+                 (define result (not (apply || (map
+                                                (curry drugs-conflict patient prescription)
+                                                (map conflict-condition relations)))))
+                 ;  (printf "\t\trelations: [~a] ~a\n" relations result)
+                 result
+                 )))
+
+      ; Short circuit evaluation if a prior condition is false.
+      ; (printf "\ttreats-all: ~a\n" (treats-all))
+      ; (printf "\tpatient-compatible: ~a\n" (patient-compatible))
+      ; (printf "\tinternally-consistent: ~a\n" (internally-consistent))
+      (and (treats-all) (patient-compatible) (internally-consistent)))
+    ]))
 
 ; Abstract over DB creation + syntax.
-(define (make-database #:drugs drugs #:conflicts conflicts)
+(define (make-database #:drugs drugs #:conflicts conflicts #:treatments treatments)
   ; Optimize here to construct hash tables to reduce the amount of comparisons.
   (define (drug-table)
     (define assocs (map (λ (d) (list (drug-name d) d)) drugs))
     (make-hash assocs))
-  (database (drug-table) conflicts))
+  (database (drug-table) conflicts treatments))
 
 
-(define (lte a) (lambda (b) (<= b a)))
+(define (lte a) (λ (b) (<= b a)))
+(define (gte a) (λ (b) (>= b a)))
+
 (define (any-allergy . as)
-  (λ (allergies)
-    (apply || (map (curry contains? allergies) as)) ))
+  `('allergy ,(λ (allergies)
+                (apply || (map (curry contains? allergies) as)) )))
+
 
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
 (define drug-database
   (make-database
-   #:drugs (list
-            (drug 'A '(X) '())
-            (drug 'B '(Y) '())
-            (drug 'C '(Y Z) '())
-            (drug 'D '(W) '())
-            (drug 'E '(U) '())
-            )
-   #:conflicts (list
-                (conflict 'A 'B '()) ; A and B unconditionally conflict.
-                (conflict 'A 'C '(E)) ; A and C conflict in the presence of E
-                (conflict 'C 'D  (any-allergy 'M 'N)) ; A and C conflict if patient has either allergy.
-                (conflict 'A 'D '('or ; A and D conflict if the patient is over age 50 and not taking C.
-                                  ('age ,(lte 50))
-                                  ('not (C))))
-                )))
+   #:drugs ; drug: name, patient requirements, properties
+   (list
+    (drug 'A  '() '())
+    (drug 'B  '() '())
+    (drug 'C  '() '())
+    (drug 'D  '() '())
+    (drug 'E  '() '())
+    )
+   #:conflicts ; conflict: two drug names and a condition
+   (list
+
+    (conflict 'A 'B '()) ; A and B unconditionally conflict.
+    (conflict 'A 'C '(E)) ; A and C conflict in the presence of E
+    (conflict 'C 'D `('requirement ,(any-allergy 'M 'N))) ; C and D conflict if patient has either allergy.
+    (conflict 'A 'D `('and ; A and D conflict if the patient is less than age 50 and not taking C.
+                      ('requirement ('age ,(lte 50)))
+                      ('not (C))))
+    )
+   #:treatments ; treatement: ailments treated, patient requirements, drug formula
+   (list
+    (treatment '(X) '() '(A)) ; Drug A treats ailment X unconditionally.
+    (treatment '(Y) `(('age ,(gte 2))) '(B)) ; Drug B treats ailment Y if the patient is over age 2.
+    (treatment '(Y Z) '() '(C A)) ; Drug C treats ailments Y and Z when used with A.
+    (treatment '(W) '() '(D)) ; Drug D treats ailment W uncondiitonally.
+    (treatment '(U) '() '(E (or B C))) ; Drug E treats ailment U if used with B or C.
+    )))
 
 
 (define (test)
@@ -193,11 +271,14 @@
   (define possible-prescription-1 '(A B))   ; Conflict
   (define possible-prescription-2 '(A D))   ; No conflict, but also doesn't fit the bill
   (define possible-prescription-3 '(A C E)) ; Transitive conflict
-  (define possible-prescription-4 '(A C))   ; Treats X and Y, no conflict. Ship it!
+  (define possible-prescription-4 '(A C D)) ; A and D conflict due to age, but OK because of C
+  (define possible-prescription-5 '(A C))   ; Treats X and Y, no conflict. Ship it!
 
   (displayln (verify-prescription drug-database marc possible-prescription-1))
   (displayln (verify-prescription drug-database marc possible-prescription-2))
   (displayln (verify-prescription drug-database marc possible-prescription-3))
-  (displayln (verify-prescription drug-database marc possible-prescription-4)))
+  (displayln (verify-prescription drug-database marc possible-prescription-4))
+  (displayln (verify-prescription drug-database marc possible-prescription-5))
+  )
 
 (test)
