@@ -1,8 +1,8 @@
 #lang rosette
 
 (require rosette/lib/destruct)
-
 (require "utils.rkt")
+
 ; (output-smt #t) ; Debugging: output SMT formula to file.
 
 ;;; Prescription Verification and Synthesis Library ;;;
@@ -43,22 +43,24 @@
 ;   *conjunction* of all requirements in the list.
 (struct drug (name requirements properties) #:transparent)
 
+; A requirement can be any of following, where `f` is a predicate takes in
+; a patient's information and returns true or false:
+(struct AGE (f))
+(struct ALLERGY (f))
+(struct BLOOD-PRESSURE (f)) ; ... and so on.
+
 ; A known treatment has
 ; - A list of one or more ailments it treats
 ; - A set of requirements about the patient to be applicable
 ; - A formula depicting a drug combination that treats the ailments, i.e.
-;     drug A, drug A /\ drug B, drug A /\ (drug B \/ drug C), etc.
-(struct treatment (ailments requirements formula))
+;     drug A, drug A /\ drug B, drug A /\ (drug B \/ (has-property 'ACE-inhibitor)), etc.
+(struct treatment (ailments requirements formula) #:transparent)
 
+; A formula literal can either be a specific drug, or it can be function that takes as input the
+; drug's property list and returns true or false if the properties are satisfied. A property in
+; a formula is considered to be true if any of the drugs satisfy the property.
+(struct PROPERTY (f))
 
-; A requirement can be any of following, where `f` is a predicate takes in
-; a patient's information and returns true or false:
-
-(struct AGE (f))
-(struct ALLERGY (f))
-(struct NOT (requirement))
-(struct AND (a b))
-(struct OR (a b))
 
 ; This definition admits the following verifier:
 (define (satisfies-requirement patient requirement)
@@ -75,11 +77,24 @@
 ; if the condition is true for a given patient and drug list.
 (struct conflict (A B condition) #:transparent)
 
-; A condition extends the `requirement` type with the ability to specify
-; other drugs, which are interepreted as "true" values if the patient is taking a
-; drug of that name. For example:
-; '(drug-name)
-(struct REQUIREMENT (r))
+; A conflict-class says that any drug that satisfies the predicate A
+; conflicts with any drug that satisfies predicate B, if condition is true.
+; This desugars down to many individual conflict relations in our encoding.
+(struct conflict-class (propertyA propertyB condition))
+
+; A condition extends the `requirement` type with the ability to specify drugs as
+; literals, which are interepreted as "true" values if the patient is taking a drug of
+; that name. For example:
+;     'REQUIREMENT(older-than 2) \/ (B C)
+; says that the patient is be older than 2 or prescribed both B and C.
+; Note that conditions are used in *conflicts*, so the drugs conflict when a condition is *true*
+(struct REQUIREMENT (r) #:transparent)
+
+
+; We also expose boolean combinations for requirements, conditions, and formulas.
+(struct NOT (a))
+(struct AND (a b))
+(struct OR (a b))
 
 ; Together, these admit the following verifier, which verifies if two
 ; drugs conflict given a patient and existing series of drugs.
@@ -96,45 +111,49 @@
             [ drug (contains? medications drug) ]
             ))
 
-; A drug database contains our "universe" of information -- these
-; are all of the drugs we know about, all of the known conflicts
-; in-between them, and all of the known treatments we have for different
-; ailments making use of these drugs.
+; A drug database contains our "universe" of information -- these are all of the drugs we
+; know about, all of the known conflicts in-between them, and all of the known treatments
+; we have for different ailments making use of these drugs.
 ;
-; Idea: while all "conflicts" in the database must be concrete conflict
-; triples, we can expose a DSL front-end that allows us to define conflicts
-; in a predicate style: i.e. drug A with active ingredient I conflicts with
-; any drug B that has some active ingredient J under certain conditions. Then
-; this predicate is evaluated against each drug B != A in the database to create
-; the relations. (This may be a reasonable way to generate data-sets.)
+; While all "conflicts" in the database must be concrete conflict triples, we expose a
+; construct (`conflict-class`) that allows us to define conflicts in a predicate style:
+; i.e. drug A with property P conflicts with any drug B that has some property Q under
+; certain conditions. Then this predicate is evaluated against each drug B != A in the
+; database to create the relations.
 (struct database (drugs conflicts treatments))
 
-; Attempt to reduce the size of the symbolic union
-(define (prescription-contains prescription drug)
-  (contains? prescription drug))
 
 ; We can check if a prescription (defined as a set of drugs) satisfies a formula to
-; constitute a valid treatment application for a given patient/ailment combination:
-(define (treats-ailment treatment patient prescription ailment)
+; constitute a valid treatment application. Here, prescription is a list of names (or false)
+; and treatment drugs is a list of #struct drug (or false)
+(define (satisfies-treatment-formula treatment-drugs prescription formula)
+  (define recurse (curry satisfies-treatment-formula treatment-drugs prescription))
+  (destruct formula
+            [ (PROPERTY f)
+              (ormap (λ (d) (and d (f (drug-properties d)))) treatment-drugs) ]
+            [ (NOT c) (not (recurse c)) ]
+            [ (OR a b) (or (recurse a) (recurse b)) ]
+            [ (AND a b) (and (recurse a) (recurse b)) ]
+            [ (list drugs ...) (andmap (curry contains? prescription) drugs) ]))
+
+; (trace satisfies-treatment-formula)
+
+(define (query-drug all-drugs drug)
+  (and drug (findf (λ (elt) (eq? (drug-name elt) drug)) all-drugs)))
+
+; Also, check whether a treatment applies to a given patient/ailment combination:
+(define (treats-ailment all-drugs treatment patient prescription ailment)
+  (define (treatment-drugs) (map (curry query-drug all-drugs) prescription))
   (and
    ; The ailment is actually contained within the list of ailments this treatment treats
-   (contains? (treatment-ailments treatment) ailment)
+   (debug "\tcontains?" (contains? (treatment-ailments treatment) ailment))
 
    ; Patients satisfy all of the requirements for the treatment to apply
-   (andmap (curry satisfies-requirement patient) (treatment-requirements treatment))
+   (debug "\treqs?" (andmap (curry satisfies-requirement patient) (treatment-requirements treatment)))
 
    ; The prescription actually satisfied the treatment's requirements.
-   (begin
-     (define (satisfies-formula prescription formula)
-       (define recurse (curry satisfies-formula prescription))
-       (destruct formula
-                 [ (NOT c) (not (recurse c)) ]
-                 [ (OR a b) (or (recurse a) (recurse b)) ]
-                 [ (AND a b) (and (recurse a) (recurse b)) ]
-                 [ (list drugs ...) (andmap (curry prescription-contains prescription) drugs) ]))
-     (satisfies-formula prescription (treatment-formula treatment)))
+   (debug "\tformula?" (satisfies-treatment-formula (treatment-drugs) prescription (treatment-formula treatment)))
    ))
-
 
 ; Finally, we can write a procedure to verify a candidate prescription for a given patient.
 ; We assume the presence of a drug database.
@@ -173,7 +192,7 @@
         (andmap
          (λ (ailment)
            (ormap (λ (treatment)
-                    (treats-ailment treatment patient prescription ailment))
+                    (treats-ailment drugs treatment patient prescription ailment))
                   treatments))
          ailments))
 
@@ -185,11 +204,10 @@
                  (map (λ (drug)
                         (if drug
                             (begin
-                              (define found (findf (λ (elt) (eq? (drug-name elt) drug)) drugs))
+                              (define found (query-drug drugs drug))
                               (if found (drug-requirements found) '()))
                             '()))
                       prescription)))
-        ; (printf "\t\tpatient-requirements: ~a\n" requirements-list)
         (andmap (curry satisfies-requirement patient) requirements-list))
 
       ; Futher optimization: fast exit on first failure since we know it's inconsistent.
@@ -218,10 +236,37 @@
        ))
     ]))
 
+(define (satisfies-drug-property property drug)
+  (define (recurse p) satisfies-drug-property p drug)
+  (destruct property
+            [(PROPERTY p) (p (drug-properties drug)) ]
+            [ (NOT c) (not (recurse c)) ]
+            [ (OR a b) (or (recurse a) (recurse b)) ]
+            [ (AND a b) (and (recurse a) (recurse b)) ]
+            ))
+
 ; Abstract over DB creation + syntax.
 (define (make-database #:drugs drugs #:conflicts conflicts #:treatments treatments)
-  ; Optimize here to construct hash tables to reduce the amount of comparisons.
-  (database drugs conflicts treatments))
+  (define expanded-conflicts
+    ;Expand conflict-classes into individual conflicts
+    (apply
+     append
+     (map (λ (cc)
+            (destruct cc
+                      [ (conflict-class pA pB condition)
+                        (define drugs-a (filter (curry satisfies-drug-property pA) drugs))
+                        (define drugs-b (filter (curry satisfies-drug-property pB) drugs))
+                        (apply append
+                               (map (λ (a)
+                                      (apply append
+                                             (map (λ (b)
+                                                    (list (conflict (drug-name a) (drug-name b) condition))
+                                                    ) drugs-b)))
+                                    drugs-a))
+                        ]
+                      [ _ (list cc) ])
+            ) conflicts)))
+  (database drugs expanded-conflicts treatments))
 
 
 ; SYNTACTIC SUGAR for our DSL, allowing a natural encoding of requirements in the struct-function form
@@ -235,12 +280,14 @@
   (ALLERGY (λ (allergies) (and (curry contains? allergies) as)) ))
 (define (no-allergy . as)
   (ALLERGY (λ (allergies) (not (ormap (curry contains? allergies) as)) )))
-
+(define (has-property . ps)
+  (PROPERTY (λ (properties) (andmap (curry contains? properties) ps))))
 
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
 (define drug-database
   (make-database
+
    #:drugs ; drug: name, patient requirements, properties
    (list
     (drug 'A  '() '())
@@ -248,35 +295,47 @@
     (drug 'C  '() '())
     (drug 'D  '() '())
     (drug 'E  '() '())
-    (drug 'A1  '() '())
-    (drug 'B1  '() '())
-    (drug 'C1  '() '())
-    (drug 'D1  '() '())
-    (drug 'E1  '() '())
-    (drug 'A2  '() '())
-    (drug 'B2  '() '())
-    (drug 'C2  '() '())
-    (drug 'D2  '() '())
-    (drug 'E2  '() '())
+    (drug 'A1  '() '(ACE-Inhibitor blue))
+    (drug 'B1  '() '(sedative vasopressor blue))
+    (drug 'C1  '() '(diuretic beta-blocker blue))
+    (drug 'D1  (list (older-than 60)) '(inotropic NHE3-inhibitor blue))
+    (drug 'E1  '() '(vasodilator beta-blocker blue))
+    (drug 'A2  '() '(red))
+    (drug 'B2  '() '(red))
+    (drug 'C2  '() '(red))
+    (drug 'D2  '() '(red))
+    (drug 'E2  '() '(red))
     )
+
    #:conflicts ; conflict: two drug names and a condition
    (list
-
     (conflict 'A 'B '()) ; A and B unconditionally conflict.
     (conflict 'A 'C '(E)) ; A and C conflict in the presence of E
     (conflict 'C 'D (REQUIREMENT (any-allergy 'M 'N))) ; C and D conflict if patient has either allergy.
     (conflict 'A 'D (AND ; A and D conflict if the patient is less than age 50 and not taking C.
                      (REQUIREMENT (younger-than 50))
                      (NOT 'C)))
-    (conflict 'A1 'B1 '())
+    ; Any vasodilator and any vasopressor unconditionally conflict.
+    (conflict-class (has-property 'vasodilator) (has-property 'vasopressor) '())
+
+    ; Any ACE inhibitor and any diuretic conflict if the patient is allergic to K.
+    (conflict-class
+     (has-property 'ACE-Inhibitor)
+     (has-property 'diuretic)
+     (REQUIREMENT (any-allergy 'K)))
+
+    ; Dummy conflicts to test scaling
+    (conflict-class
+     (has-property 'blue)
+     (has-property 'red)
+     '())
+
     (conflict 'A2 'B2 '())
-    (conflict 'B1 'C1 '())
     (conflict 'B2 'C2 '())
-    (conflict 'C1 'D1 '())
     (conflict 'C2 'D2 '())
-    (conflict 'D1 'E1 '())
     (conflict 'D2 'E2 '())
     )
+
    #:treatments ; treatement: ailments treated, patient requirements, drug formula
    (list
     (treatment '(X) '() '(A)) ; Drug A treats ailment X unconditionally.
@@ -285,11 +344,12 @@
     (treatment '(W) '() '(D)) ; Drug D treats ailment W unconditionally.
     (treatment '(U) '() '(E (OR B C))) ; Drug E treats ailment U if used with B or C.
 
-    (treatment '(X1) '() '(A1))
-    (treatment '(Y1) (list (older-than 2)) '(B1))
-    (treatment '(Y1 Z1) '() '(C1 A1))
-    (treatment '(W1) '() '(D1))
-    (treatment '(U1) '() '(E1 (OR B1 C1)))
+    ; This treatment works if the patient isn't allergic to M
+    (treatment '(X1) (list (no-allergy 'M))
+               ; The treatment requires at least one drug in each property.
+               ; Note: this is *different* than saying (has-property 'A B),
+               ;       which would require one single drug to have both properties.
+               (AND (has-property 'ACE-Inhibitor) (has-property 'beta-blocker)))
     )))
 
 
@@ -307,7 +367,7 @@
   (displayln (verify-prescription drug-database marc possible-prescription-4))
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
 
-(test)
+; (test)
 
 (define (display-prescription prescription)
   (displayln (filter identity prescription)))
@@ -331,12 +391,10 @@
            (map (λ (drug) (find ps drug)) all-drugs))
          (powerset all-drugs)))
 
-  ;  (printf "Generated powerset of size ~a\n" (length all-possible-prescriptions))
+  (debug "Generated powerset of size ~a\n" (length all-possible-prescriptions))
 
   (define (check prescription)
-    (define result (verify-prescription drug-database marc prescription))
-    ; (printf "~a: ~a\n" prescription result)
-    result)
+    (verify-prescription drug-database marc prescription))
 
   (define valid-prescriptions
     (map (curry filter identity)
@@ -350,7 +408,7 @@
   ; (time (exhaustive-test (map drug-name (database-drugs drug-database))))
   )
 
-(test-permutations)
+; (test-permutations)
 
 ; Generate a prescription for a patient from a database, without taking into account any
 ; existing prescription.
@@ -365,12 +423,20 @@
     (solve (assert (check symbolic-prescription))))
   (match solution
     [ (model assignment)
-      (evaluate symbolic-prescription solution) ]
+      ; Rosette sometimes returns a partial assignment if it is enough to determine satisfiability,
+      ; so here we add the default assignment (#f) for every declared variable.
+      (evaluate symbolic-prescription (complete-solution solution symbolic-variables)) ]
     [ 'unsat ??? ]))
 
 (define (test-automated)
+  ; Test basic features
   (define marc (patient 42 '(K) '(X Y)))
-  (display-prescription (time (generate-prescription drug-database marc)))) ; (A C)
+  (display-prescription (time (generate-prescription drug-database marc))) ; (A C)
+
+  ; Test that conflict-classes and treatment-formulas work well.
+  (define jane (patient 31 '(K) '(X1)))
+  (display-prescription (time (generate-prescription drug-database jane))) ; (A1 E1)
+  )
 
 (test-automated)
 
