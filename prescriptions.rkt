@@ -111,17 +111,15 @@
             [ drug (contains? medications drug) ]
             ))
 
-; A drug database contains our "universe" of information -- these
-; are all of the drugs we know about, all of the known conflicts
-; in-between them, and all of the known treatments we have for different
-; ailments making use of these drugs.
+; A drug database contains our "universe" of information -- these are all of the drugs we
+; know about, all of the known conflicts in-between them, and all of the known treatments
+; we have for different ailments making use of these drugs.
 ;
-; Idea: while all "conflicts" in the database must be concrete conflict
-; triples, we can expose a DSL front-end that allows us to define conflicts
-; in a predicate style: i.e. drug A with active ingredient I conflicts with
-; any drug B that has some active ingredient J under certain conditions. Then
-; this predicate is evaluated against each drug B != A in the database to create
-; the relations. (This may be a reasonable way to generate data-sets.)
+; While all "conflicts" in the database must be concrete conflict triples, we expose a
+; construct (`conflict-class`) that allows us to define conflicts in a predicate style:
+; i.e. drug A with property P conflicts with any drug B that has some property Q under
+; certain conditions. Then this predicate is evaluated against each drug B != A in the
+; database to create the relations.
 (struct database (drugs conflicts treatments))
 
 
@@ -156,8 +154,6 @@
    ; The prescription actually satisfied the treatment's requirements.
    (debug "\tformula?" (satisfies-treatment-formula (treatment-drugs) prescription (treatment-formula treatment)))
    ))
-
-; (trace treats-ailment)
 
 ; Finally, we can write a procedure to verify a candidate prescription for a given patient.
 ; We assume the presence of a drug database.
