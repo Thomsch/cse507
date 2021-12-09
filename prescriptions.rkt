@@ -1,6 +1,8 @@
 #lang rosette
 
 (require rosette/lib/destruct)
+(output-smt #t)
+
 (require "utils.rkt")
 
 ;;; Prescription Verification and Synthesis Library ;;;
@@ -64,8 +66,8 @@
     [ `('age ,f) (f (patient-age patient))]
     [ `('allergy ,f) (f (patient-allergies patient))]
     [ `('not ,r) (not (satisfies-requirement patient r)) ]
-    [ `('or ,a ...)  (apply || (map (curry satisfies-requirement patient) a)) ]
-    [ `('and ,a ...)  (apply && (map (curry satisfies-requirement patient) a)) ]
+    [ `('or ,a ...)  (ormap (curry satisfies-requirement patient) a) ]
+    [ `('and ,a ...)  (andmap (curry satisfies-requirement patient) a) ]
     ))
 
 ; A conflict relation says that drug A conflicts with drug B,
@@ -94,13 +96,13 @@
         (not (drugs-conflict patient medications c)) ]
       [ `('or ,c ...)
         ; (displayln "\t\t\tOR")
-        (apply || (map (curry drugs-conflict patient medications) c)) ]
+        (ormap (curry drugs-conflict patient medications) c) ]
       [ `('and ,c ...)
         ; (displayln "\t\t\tAND")
-        (apply && (map (curry drugs-conflict patient medications) c)) ]
+        (andmap (curry drugs-conflict patient medications) c) ]
       [ `(,drugs ...)
         ; (displayln "\t\t\tGENERIC")
-        (apply && (map (curry contains? medications) drugs)) ]
+        (andmap (curry contains? medications) drugs) ]
       ))
   ; (printf "\t\t\tResult ~a: ~a\n" condition result)
   result)
@@ -126,7 +128,7 @@
    (contains? (treatment-ailments treatment) ailment)
 
    ; Patients satisfy all of the requirements for the treatment to apply
-   (apply && (map (curry satisfies-requirement patient) (treatment-requirements treatment)))
+   (andmap (curry satisfies-requirement patient) (treatment-requirements treatment))
 
    ; The prescription actually satisfied the treatment's requirements.
    (begin
@@ -134,8 +136,8 @@
        (match formula
          [ `('not ,f) (not (satisfies-formula prescription f)) ]
          [ `('or ,f ...) (apply || (map (curry satisfies-formula prescription) f)) ]
-         [ `('and ,f ...) (apply && (map (curry satisfies-formula prescription) f)) ]
-         [ `(,drugs ...) (apply && (map (curry contains? prescription) drugs)) ]
+         [ `('and ,f ...) (andmap (curry satisfies-formula prescription) f) ]
+         [ `(,drugs ...) (andmap (curry contains? prescription) drugs) ]
          ))
      (satisfies-formula prescription (treatment-formula treatment)))
    ))
@@ -181,41 +183,45 @@
       (define (treats-all)
         ; Check that for each ailment the patient has, there is some known treatment
         ; that is applicable via this patient/prescription combination.
-        (apply &&
-               (map
-                (λ (ailment)
-                  (apply ||
-                         (map (λ (treatment)
-                                (treats-ailment treatment patient prescription ailment))
-                              treatments)))
-                ailments)))
+        (andmap
+         (λ (ailment)
+           (ormap (λ (treatment)
+                    (treats-ailment treatment patient prescription ailment))
+                  treatments))
+         ailments))
 
       (define (patient-compatible)
         (define requirements-list (query-drugs drug-requirements))
-        (apply && (map (curry satisfies-requirement patient) requirements-list)))
+        (andmap (curry satisfies-requirement patient) requirements-list))
 
       ; Futher optimization: fast exit on first failure since we know it's inconsistent.
       (define (internally-consistent)
-        (apply &&
-               (for*/list ([a prescription]
-                           [b prescription])
-                 ; Query all of the relations from the database
-                 (define relations (query-conflicts a b))
-
-                 ; No pairs of drugs causes a conflicts.
-                 (define result (not (apply || (map
-                                                (curry drugs-conflict patient prescription)
-                                                (map conflict-condition relations)))))
-                 ;  (printf "\t\trelations: [~a] ~a\n" relations result)
-                 result
-                 )))
+        (andmap
+         (λ (a)
+           (andmap
+            (λ (b)
+              ; Query all of the relations from the database
+              (define relations (query-conflicts a b))
+              ; No pairs of drugs causes a conflicts.
+              (define result (not (ormap
+                                   (curry drugs-conflict patient prescription)
+                                   (map conflict-condition relations))))
+              ;  (printf "\t\trelation [~a <-> ~a] ~a => ~a\n" a b relations result)
+              result)
+            prescription))
+         prescription))
 
       ; Short circuit evaluation if a prior condition is false.
-      ; (printf "\ttreats-all: ~a\n" (treats-all))
-      ; (printf "\tpatient-compatible: ~a\n" (patient-compatible))
-      ; (printf "\tinternally-consistent: ~a\n" (internally-consistent))
-      (and (treats-all) (patient-compatible) (internally-consistent)))
+      (and
+       (debug "treats-all" (treats-all))
+       (debug "patient-compatible" (patient-compatible))
+       (debug "internally-consistent" (internally-consistent))
+       ))
     ]))
+
+(define (debug message expr)
+  ; (printf "\t~a: ~a\n" message expr)
+  expr)
 
 ; Abstract over DB creation + syntax.
 (define (make-database #:drugs drugs #:conflicts conflicts #:treatments treatments)
@@ -231,7 +237,7 @@
 
 (define (any-allergy . as)
   `('allergy ,(λ (allergies)
-                (apply || (map (curry contains? allergies) as)) )))
+                (ormap (curry contains? allergies) as)) ))
 
 
 ; TODO: define a global database, or generate them on the fly from
@@ -261,7 +267,7 @@
     (treatment '(X) '() '(A)) ; Drug A treats ailment X unconditionally.
     (treatment '(Y) `(('age ,(gte 2))) '(B)) ; Drug B treats ailment Y if the patient is over age 2.
     (treatment '(Y Z) '() '(C A)) ; Drug C treats ailments Y and Z when used with A.
-    (treatment '(W) '() '(D)) ; Drug D treats ailment W uncondiitonally.
+    (treatment '(W) '() '(D)) ; Drug D treats ailment W unconditionally.
     (treatment '(U) '() '(E (or B C))) ; Drug E treats ailment U if used with B or C.
     )))
 
@@ -279,6 +285,8 @@
   (displayln (verify-prescription drug-database marc possible-prescription-3))
   (displayln (verify-prescription drug-database marc possible-prescription-4))
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
+
+(test)
 
 (define (test-permutations)
   (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
@@ -304,5 +312,4 @@
   ; And indeed, we see that only ACD and AC are valid prescriptions :)
   (printf "VALID PRESCRIPTIONS: ~a\n" valid-prescriptions))
 
-(test)
 (test-permutations)
