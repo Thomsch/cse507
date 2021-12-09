@@ -223,12 +223,19 @@
   ; Optimize here to construct hash tables to reduce the amount of comparisons.
   (database drugs conflicts treatments))
 
-(define (lte a) (λ (b) (<= b a)))
-(define (gte a) (λ (b) (>= b a)))
 
+; SYNTACTIC SUGAR for our DSL, allowing a natural encoding of requirements in the struct-function form
+(define (younger-than a)
+  (AGE (λ (b) (<= b a))))
+(define (older-than a)
+  (AGE (λ (b) (>= b a))))
 (define (any-allergy . as)
-  (ALLERGY (λ (allergies)
-             (ormap (curry contains? allergies) as)) ))
+  (ALLERGY (λ (allergies) (ormap (curry contains? allergies) as)) ))
+(define (both-allergies . as)
+  (ALLERGY (λ (allergies) (and (curry contains? allergies) as)) ))
+(define (no-allergy . as)
+  (ALLERGY (λ (allergies) (not (ormap (curry contains? allergies) as)) )))
+
 
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
@@ -259,7 +266,7 @@
     (conflict 'A 'C '(E)) ; A and C conflict in the presence of E
     (conflict 'C 'D (REQUIREMENT (any-allergy 'M 'N))) ; C and D conflict if patient has either allergy.
     (conflict 'A 'D (AND ; A and D conflict if the patient is less than age 50 and not taking C.
-                     (REQUIREMENT (AGE (lte 50)))
+                     (REQUIREMENT (younger-than 50))
                      (NOT 'C)))
     (conflict 'A1 'B1 '())
     (conflict 'A2 'B2 '())
@@ -273,13 +280,13 @@
    #:treatments ; treatement: ailments treated, patient requirements, drug formula
    (list
     (treatment '(X) '() '(A)) ; Drug A treats ailment X unconditionally.
-    (treatment '(Y) (list (AGE (gte 2))) '(B)) ; Drug B treats ailment Y if the patient is over age 2.
+    (treatment '(Y) (list (older-than 2)) '(B)) ; Drug B treats ailment Y if the patient is over age 2.
     (treatment '(Y Z) '() '(C A)) ; Drug C treats ailments Y and Z when used with A.
     (treatment '(W) '() '(D)) ; Drug D treats ailment W unconditionally.
     (treatment '(U) '() '(E (OR B C))) ; Drug E treats ailment U if used with B or C.
 
     (treatment '(X1) '() '(A1))
-    (treatment '(Y1) (list (AGE (gte 2))) '(B1))
+    (treatment '(Y1) (list (older-than 2)) '(B1))
     (treatment '(Y1 Z1) '() '(C1 A1))
     (treatment '(W1) '() '(D1))
     (treatment '(U1) '() '(E1 (OR B1 C1)))
