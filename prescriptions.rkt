@@ -1,8 +1,9 @@
 #lang rosette
 
 (require rosette/lib/destruct)
-
+(require racket/trace)
 (require "utils.rkt")
+
 ; (output-smt #t) ; Debugging: output SMT formula to file.
 
 ;;; Prescription Verification and Synthesis Library ;;;
@@ -54,7 +55,7 @@
 ; - A set of requirements about the patient to be applicable
 ; - A formula depicting a drug combination that treats the ailments, i.e.
 ;     drug A, drug A /\ drug B, drug A /\ (drug B \/ (has-property 'ACE-inhibitor)), etc.
-(struct treatment (ailments requirements formula))
+(struct treatment (ailments requirements formula) #:transparent)
 
 ; A formula literal can either be a specific drug, or it can be function that takes as input the
 ; drug's property list and returns true or false if the properties are satisfied. A property in
@@ -88,7 +89,7 @@
 ;     'REQUIREMENT(older-than 2) \/ (B C)
 ; says that the patient is be older than 2 or prescribed both B and C.
 ; Note that conditions are used in *conflicts*, so the drugs conflict when a condition is *true*
-(struct REQUIREMENT (r))
+(struct REQUIREMENT (r) #:transparent)
 
 
 ; We also expose boolean combinations for requirements, conditions, and formulas.
@@ -129,29 +130,35 @@
 ; constitute a valid treatment application. Here, prescription is a list of names (or false)
 ; and treatment drugs is a list of #struct drug (or false)
 (define (satisfies-treatment-formula treatment-drugs prescription formula)
-  (define recurse (curry satisfies-treatment-formula prescription))
+  (define recurse (curry satisfies-treatment-formula treatment-drugs prescription))
   (destruct formula
             [ (PROPERTY f)
-              (ormap (λ (d) (and d (f (drug-properties d))) treatment-drugs))]
+              (ormap (λ (d) (and d (f (drug-properties d)))) treatment-drugs) ]
             [ (NOT c) (not (recurse c)) ]
             [ (OR a b) (or (recurse a) (recurse b)) ]
             [ (AND a b) (and (recurse a) (recurse b)) ]
             [ (list drugs ...) (andmap (curry contains? prescription) drugs) ]))
 
+; (trace satisfies-treatment-formula)
+
+(define (query-drug all-drugs drug)
+  (and drug (findf (λ (elt) (eq? (drug-name elt) drug)) all-drugs)))
+
 ; Also, check whether a treatment applies to a given patient/ailment combination:
 (define (treats-ailment all-drugs treatment patient prescription ailment)
+  (define (treatment-drugs) (map (curry query-drug all-drugs) prescription))
   (and
    ; The ailment is actually contained within the list of ailments this treatment treats
-   (contains? (treatment-ailments treatment) ailment)
+   (debug "\tcontains?" (contains? (treatment-ailments treatment) ailment))
+
    ; Patients satisfy all of the requirements for the treatment to apply
-   (andmap (curry satisfies-requirement patient) (treatment-requirements treatment))
+   (debug "\treqs?" (andmap (curry satisfies-requirement patient) (treatment-requirements treatment)))
 
    ; The prescription actually satisfied the treatment's requirements.
-   (begin
-     (define treatment-drugs (map (λ (d) (and d (find all-drugs d))) prescription))
-     (satisfies-treatment-formula treatment-drugs prescription (treatment-formula treatment)))
+   (debug "\tformula?" (satisfies-treatment-formula (treatment-drugs) prescription (treatment-formula treatment)))
    ))
 
+; (trace treats-ailment)
 
 ; Finally, we can write a procedure to verify a candidate prescription for a given patient.
 ; We assume the presence of a drug database.
@@ -202,7 +209,7 @@
                  (map (λ (drug)
                         (if drug
                             (begin
-                              (define found (findf (λ (elt) (eq? (drug-name elt) drug)) drugs))
+                              (define found (query-drug drugs drug))
                               (if found (drug-requirements found) '()))
                             '()))
                       prescription)))
@@ -259,7 +266,7 @@
                                (map (λ (a)
                                       (apply append
                                              (map (λ (b)
-                                                    (list (conflict a b condition))
+                                                    (list (conflict (drug-name a) (drug-name b) condition))
                                                     ) drugs-b)))
                                     drugs-a))
                         ]
@@ -286,6 +293,7 @@
 ;  random data and random global properties (see above)
 (define drug-database
   (make-database
+
    #:drugs ; drug: name, patient requirements, properties
    (list
     (drug 'A  '() '())
@@ -293,20 +301,20 @@
     (drug 'C  '() '())
     (drug 'D  '() '())
     (drug 'E  '() '())
-    (drug 'A1  '() '(ACE-Inhibitor))
-    (drug 'B1  '() '(sedative vasopressor))
-    (drug 'C1  '() '(diuretic beta-blocker))
-    (drug 'D1  '() '(inotropic NHE3-inhibitor))
-    (drug 'E1  '() '(vasodilator))
-    (drug 'A2  '() '())
-    (drug 'B2  '() '())
-    (drug 'C2  '() '())
-    (drug 'D2  '() '())
-    (drug 'E2  '() '())
+    (drug 'A1  '() '(ACE-Inhibitor blue))
+    (drug 'B1  '() '(sedative vasopressor blue))
+    (drug 'C1  '() '(diuretic beta-blocker blue))
+    (drug 'D1  (list (older-than 60)) '(inotropic NHE3-inhibitor blue))
+    (drug 'E1  '() '(vasodilator beta-blocker blue))
+    (drug 'A2  '() '(red))
+    (drug 'B2  '() '(red))
+    (drug 'C2  '() '(red))
+    (drug 'D2  '() '(red))
+    (drug 'E2  '() '(red))
     )
+
    #:conflicts ; conflict: two drug names and a condition
    (list
-
     (conflict 'A 'B '()) ; A and B unconditionally conflict.
     (conflict 'A 'C '(E)) ; A and C conflict in the presence of E
     (conflict 'C 'D (REQUIREMENT (any-allergy 'M 'N))) ; C and D conflict if patient has either allergy.
@@ -315,16 +323,25 @@
                      (NOT 'C)))
     ; Any vasodilator and any vasopressor unconditionally conflict.
     (conflict-class (has-property 'vasodilator) (has-property 'vasopressor) '())
+
     ; Any ACE inhibitor and any beta blocker conflict if the patient is allergic to K.
     (conflict-class
      (has-property 'ACE-Inhibitor)
-     (has-property 'beta-blocker)
+     (has-property 'diuretic)
      (REQUIREMENT (any-allergy 'K)))
+
+    ; Dummy conflicts to test scaling
+    (conflict-class
+     (has-property 'blue)
+     (has-property 'red)
+     '())
+
     (conflict 'A2 'B2 '())
     (conflict 'B2 'C2 '())
     (conflict 'C2 'D2 '())
     (conflict 'D2 'E2 '())
     )
+
    #:treatments ; treatement: ailments treated, patient requirements, drug formula
    (list
     (treatment '(X) '() '(A)) ; Drug A treats ailment X unconditionally.
@@ -333,11 +350,12 @@
     (treatment '(W) '() '(D)) ; Drug D treats ailment W unconditionally.
     (treatment '(U) '() '(E (OR B C))) ; Drug E treats ailment U if used with B or C.
 
-    (treatment '(X1) '() '(A1))
-    (treatment '(Y1) (list (older-than 2)) '(B1))
-    (treatment '(Y1 Z1) '() '(C1 A1))
-    (treatment '(W1) '() '(D1))
-    (treatment '(U1) '() '(E1 (OR B1 C1)))
+    ; This treatment works if the patient isn't allergic to M
+    (treatment '(X1) (list (no-allergy 'M))
+               ; The treatement requires at least one drug in each property.
+               ; Note: this is *different* than saying (has-property 'A B),
+               ;       which would require one single drug to have both properties.
+               (AND (has-property 'ACE-Inhibitor) (has-property 'beta-blocker)))
     )))
 
 
@@ -355,7 +373,7 @@
   (displayln (verify-prescription drug-database marc possible-prescription-4))
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
 
-(test)
+; (test)
 
 (define (display-prescription prescription)
   (displayln (filter identity prescription)))
@@ -398,7 +416,7 @@
   ; (time (exhaustive-test (map drug-name (database-drugs drug-database))))
   )
 
-(test-permutations)
+; (test-permutations)
 
 ; Generate a prescription for a patient from a database, without taking into account any
 ; existing prescription.
@@ -419,8 +437,14 @@
     [ 'unsat ??? ]))
 
 (define (test-automated)
+  ; Test basic features
   (define marc (patient 42 '(K) '(X Y)))
-  (display-prescription (time (generate-prescription drug-database marc)))) ; (A C)
+  (display-prescription (time (generate-prescription drug-database marc))) ; (A C)
+
+  ; Test that conflict-classes and treatment-formulas work well.
+  (define jane (patient 31 '(K) '(X1)))
+  (display-prescription (time (generate-prescription drug-database jane))) ; (A1 E1)
+  )
 
 (test-automated)
 
