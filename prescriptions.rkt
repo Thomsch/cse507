@@ -1,7 +1,6 @@
-#lang rosette
+#lang rosette/safe
 
 (require rosette/lib/destruct)
-; (output-smt #t)
 
 (require "utils.rkt")
 
@@ -53,22 +52,24 @@
 
 ; A requirement can be any of following, where `f` is a predicate takes in
 ; a patient's information and returns true or false:
-'('age f)
-'('allergy f)
-'('not requirement)
-'('and a b ...)
-'('or a b ...)
+
+(struct AGE (f))
+(struct ALLERGY (f))
+(struct NOT (requirement))
+(struct AND (a b))
+(struct OR (a b))
 
 ; This definition admits the following verifier:
 (define (satisfies-requirement patient requirement)
   ; (printf "SATISFIES? ~a\n" requirement)
-  (match requirement
-    [ `('age ,f) (f (patient-age patient))]
-    [ `('allergy ,f) (f (patient-allergies patient))]
-    [ `('not ,r) (not (satisfies-requirement patient r)) ]
-    [ `('or ,a ...)  (ormap (curry satisfies-requirement patient) a) ]
-    [ `('and ,a ...)  (andmap (curry satisfies-requirement patient) a) ]
-    ))
+  (define recurse (curry satisfies-requirement patient))
+  (destruct requirement
+            [ (AGE f) (f (patient-age patient))]
+            [ (ALLERGY f) (f (patient-allergies patient))]
+            [ (NOT r)   (not (recurse r)) ]
+            [ (OR a b)  (or (recurse a) (recurse b)) ]
+            [ (AND a b) (and (recurse a) (recurse b)) ]
+            ))
 
 ; A conflict relation says that drug A conflicts with drug B,
 ; if the condition is true for a given patient and drug list.
@@ -77,8 +78,8 @@
 ; A condition extends the `requirement` type with the ability to specify
 ; other drugs, which are interepreted as "true" values if the patient is taking a
 ; drug of that name. For example:
-'(drug-name)
-'('requirement r)
+; '(drug-name)
+(struct REQUIREMENT (r))
 
 ; Together, these admit the following verifier, which verifies if two
 ; drugs conflict given a patient and existing series of drugs.
@@ -86,24 +87,22 @@
 ;  medications list would cause conflicts to occur with any there.)
 (define (drugs-conflict patient medications condition)
   ; (printf "\t\tConflict? ~a\n" condition)
+  (define recurse (curry drugs-conflict patient medications))
   (define result
-    (match condition
-      [ `('requirement ,r)
-        ; (displayln "\t\t\tREQUIREMENT")
-        (satisfies-requirement patient r) ]
-      [ `('not ,c)
-        ; (displayln "\t\t\tNOT")
-        (not (drugs-conflict patient medications c)) ]
-      [ `('or ,c ...)
-        ; (displayln "\t\t\tOR")
-        (ormap (curry drugs-conflict patient medications) c) ]
-      [ `('and ,c ...)
-        ; (displayln "\t\t\tAND")
-        (andmap (curry drugs-conflict patient medications) c) ]
-      [ `(,drugs ...)
-        ; (displayln "\t\t\tGENERIC")
-        (andmap (curry contains? medications) drugs) ]
-      ))
+    (destruct condition
+              [ (REQUIREMENT r) ; (displayln "\t\t\tREQUIREMENT")
+                (satisfies-requirement patient r) ]
+              [ (NOT c) ; (displayln "\t\t\tNOT")
+                (not (recurse c)) ]
+              [ (OR a b) ; (displayln "\t\t\tOR")
+                (or (recurse a) (recurse b)) ]
+              [ (AND a b) ; (displayln "\t\t\tAND")
+                (and (recurse a) (recurse b))  ]
+              [ (list drugs ...)
+                ; (displayln "\t\t\tGENERIC")
+                (andmap (curry contains? medications) drugs) ]
+              [ drug (contains? medications drug) ]
+              ))
   ; (printf "\t\t\tResult ~a: ~a\n" condition result)
   result)
 
@@ -133,12 +132,12 @@
    ; The prescription actually satisfied the treatment's requirements.
    (begin
      (define (satisfies-formula prescription formula)
-       (match formula
-         [ `('not ,f) (not (satisfies-formula prescription f)) ]
-         [ `('or ,f ...) (apply || (map (curry satisfies-formula prescription) f)) ]
-         [ `('and ,f ...) (andmap (curry satisfies-formula prescription) f) ]
-         [ `(,drugs ...) (andmap (curry contains? prescription) drugs) ]
-         ))
+       (define recurse (curry satisfies-formula prescription))
+       (destruct formula
+                 [ (NOT c) (not (recurse c)) ]
+                 [ (OR a b) (or (recurse a) (recurse b)) ]
+                 [ (AND a b) (and (recurse a) (recurse b)) ]
+                 [ (list drugs ...) (andmap (curry contains? prescription) drugs) ]))
      (satisfies-formula prescription (treatment-formula treatment)))
    ))
 
@@ -235,8 +234,8 @@
 (define (gte a) (λ (b) (>= b a)))
 
 (define (any-allergy . as)
-  `('allergy ,(λ (allergies)
-                (ormap (curry contains? allergies) as)) ))
+  (ALLERGY (λ (allergies)
+             (ormap (curry contains? allergies) as)) ))
 
 
 ; TODO: define a global database, or generate them on the fly from
@@ -256,18 +255,18 @@
 
     (conflict 'A 'B '()) ; A and B unconditionally conflict.
     (conflict 'A 'C '(E)) ; A and C conflict in the presence of E
-    (conflict 'C 'D `('requirement ,(any-allergy 'M 'N))) ; C and D conflict if patient has either allergy.
-    (conflict 'A 'D `('and ; A and D conflict if the patient is less than age 50 and not taking C.
-                      ('requirement ('age ,(lte 50)))
-                      ('not (C))))
+    (conflict 'C 'D (REQUIREMENT (any-allergy 'M 'N))) ; C and D conflict if patient has either allergy.
+    (conflict 'A 'D (AND ; A and D conflict if the patient is less than age 50 and not taking C.
+                     (REQUIREMENT (AGE (lte 50)))
+                     (NOT 'C)))
     )
    #:treatments ; treatement: ailments treated, patient requirements, drug formula
    (list
     (treatment '(X) '() '(A)) ; Drug A treats ailment X unconditionally.
-    (treatment '(Y) `(('age ,(gte 2))) '(B)) ; Drug B treats ailment Y if the patient is over age 2.
+    (treatment '(Y) (list (AGE (gte 2))) '(B)) ; Drug B treats ailment Y if the patient is over age 2.
     (treatment '(Y Z) '() '(C A)) ; Drug C treats ailments Y and Z when used with A.
     (treatment '(W) '() '(D)) ; Drug D treats ailment W unconditionally.
-    (treatment '(U) '() '(E (or B C))) ; Drug E treats ailment U if used with B or C.
+    (treatment '(U) '() '(E (OR B C))) ; Drug E treats ailment U if used with B or C.
     )))
 
 
@@ -343,4 +342,4 @@
 
 ; (test)
 ; (test-permutations)
-(test-synthesis)
+; (test-synthesis)
