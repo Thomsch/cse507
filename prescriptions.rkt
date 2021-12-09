@@ -77,6 +77,11 @@
 ; if the condition is true for a given patient and drug list.
 (struct conflict (A B condition) #:transparent)
 
+; A conflict-class says that any drug that satisfies the predicate A
+; conflicts with any drug that satisfies predicate B, if condition is true.
+; This desugars down to many individual conflict relations in our encoding.
+(struct conflict-class (propertyA propertyB condition))
+
 ; A condition extends the `requirement` type with the ability to specify drugs as
 ; literals, which are interepreted as "true" values if the patient is taking a drug of
 ; that name. For example:
@@ -230,10 +235,37 @@
        ))
     ]))
 
+(define (satisfies-drug-property property drug)
+  (define (recurse p) satisfies-drug-property p drug)
+  (destruct property
+            [(PROPERTY p) (p (drug-properties drug)) ]
+            [ (NOT c) (not (recurse c)) ]
+            [ (OR a b) (or (recurse a) (recurse b)) ]
+            [ (AND a b) (and (recurse a) (recurse b)) ]
+            ))
+
 ; Abstract over DB creation + syntax.
 (define (make-database #:drugs drugs #:conflicts conflicts #:treatments treatments)
-  ; Optimize here to construct hash tables to reduce the amount of comparisons.
-  (database drugs conflicts treatments))
+  (define expanded-conflicts
+    ;Expand conflict-classes into individual conflicts
+    (apply
+     append
+     (map (λ (cc)
+            (destruct cc
+                      [ (conflict-class pA pB condition)
+                        (define drugs-a (filter (curry satisfies-drug-property pA) drugs))
+                        (define drugs-b (filter (curry satisfies-drug-property pB) drugs))
+                        (apply append
+                               (map (λ (a)
+                                      (apply append
+                                             (map (λ (b)
+                                                    (list (conflict a b condition))
+                                                    ) drugs-b)))
+                                    drugs-a))
+                        ]
+                      [ _ (list cc) ])
+            ) conflicts)))
+  (database drugs expanded-conflicts treatments))
 
 
 ; SYNTACTIC SUGAR for our DSL, allowing a natural encoding of requirements in the struct-function form
@@ -247,7 +279,8 @@
   (ALLERGY (λ (allergies) (and (curry contains? allergies) as)) ))
 (define (no-allergy . as)
   (ALLERGY (λ (allergies) (not (ormap (curry contains? allergies) as)) )))
-
+(define (has-property . ps)
+  (PROPERTY (λ (properties) (andmap (curry contains? properties) ps))))
 
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
@@ -260,11 +293,11 @@
     (drug 'C  '() '())
     (drug 'D  '() '())
     (drug 'E  '() '())
-    (drug 'A1  '() '())
-    (drug 'B1  '() '())
-    (drug 'C1  '() '())
-    (drug 'D1  '() '())
-    (drug 'E1  '() '())
+    (drug 'A1  '() '(ACE-Inhibitor))
+    (drug 'B1  '() '(sedative vasopressor))
+    (drug 'C1  '() '(diuretic beta-blocker))
+    (drug 'D1  '() '(inotropic NHE3-inhibitor))
+    (drug 'E1  '() '(vasodilator))
     (drug 'A2  '() '())
     (drug 'B2  '() '())
     (drug 'C2  '() '())
@@ -280,13 +313,16 @@
     (conflict 'A 'D (AND ; A and D conflict if the patient is less than age 50 and not taking C.
                      (REQUIREMENT (younger-than 50))
                      (NOT 'C)))
-    (conflict 'A1 'B1 '())
+    ; Any vasodilator and any vasopressor unconditionally conflict.
+    (conflict-class (has-property 'vasodilator) (has-property 'vasopressor) '())
+    ; Any ACE inhibitor and any beta blocker conflict if the patient is allergic to K.
+    (conflict-class
+     (has-property 'ACE-Inhibitor)
+     (has-property 'beta-blocker)
+     (REQUIREMENT (any-allergy 'K)))
     (conflict 'A2 'B2 '())
-    (conflict 'B1 'C1 '())
     (conflict 'B2 'C2 '())
-    (conflict 'C1 'D1 '())
     (conflict 'C2 'D2 '())
-    (conflict 'D1 'E1 '())
     (conflict 'D2 'E2 '())
     )
    #:treatments ; treatement: ailments treated, patient requirements, drug formula
@@ -377,7 +413,9 @@
     (solve (assert (check symbolic-prescription))))
   (match solution
     [ (model assignment)
-      (evaluate symbolic-prescription solution) ]
+      ; Rosette sometimes returns a partial assignment if it is enough to determine satisfiability,
+      ; so here we add the default assignment (#f) for every declared variable.
+      (evaluate symbolic-prescription (complete-solution solution symbolic-variables)) ]
     [ 'unsat ??? ]))
 
 (define (test-automated)
