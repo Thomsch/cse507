@@ -90,6 +90,7 @@
     Cancer
     Cholesterol
     Colds
+    Fever
     Flu
     Constipation
     COPD
@@ -128,6 +129,23 @@
     Stroke
     Swine-Flu
     UTI
+    ))
+
+(define side-effects '(
+    Arythimia
+    Cancer
+    Constipation
+    Dermatitis
+    Diarrhea
+    Dizziness
+    Drowsiness
+    Dry-mouth
+    Fever
+    Headache
+    Insomnia
+    Internal-bleeding
+    Nausea
+    Suicidal-thoughts
     ))
 
 ;;; (for ([(group i) (in-indexed ailements)])
