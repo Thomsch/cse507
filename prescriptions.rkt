@@ -300,13 +300,16 @@
   (displayln (verify-prescription drug-database marc possible-prescription-4))
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
 
-; (test)
+(test)
+
+(define (display-prescription prescription)
+  (displayln (filter identity prescription)))
 
 ; For testing purposes, we want to see if our verifier returns true/false on any
 ; possible permutation of input prescriptions. While this is mostly intended to make sure
 ; our verifier code doesn't crash, it also makes sense as an exhaustive search. This search
 ; is exponential in the size of the database, which is where the solver comes in.
-(define (test-permutations)
+(define (exhaustive-test all-drugs)
   (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
 
   ; Lightly modified from:
@@ -316,11 +319,12 @@
         (let ([rst (powerset (rest aL))])
           (append (map (λ (x) (cons (first aL) x)) rst) rst))))
 
-  (define all-drugs '(A B C D E))
   (define all-possible-prescriptions
     (map (λ (ps)
            (map (λ (drug) (find ps drug)) all-drugs))
          (powerset all-drugs)))
+
+  ;  (printf "Generated powerset of size ~a\n" (length all-possible-prescriptions))
 
   (define (check prescription)
     (define result (verify-prescription drug-database marc prescription))
@@ -331,29 +335,15 @@
     (map (curry filter identity)
          (filter check all-possible-prescriptions)))
   ; And indeed, we see that only ACD and AC are valid prescriptions :)
-  (printf "VALID PRESCRIPTIONS: ~a\n" valid-prescriptions))
+  (print-upto 5 "Exhaustive search" valid-prescriptions))
 
-; (test-permutations)
+(define (test-permutations)
+  (time (exhaustive-test '(A B C D E)))
+  ; Uncomment this test for benchmarking (warning: takes a while!)
+  ; (time (exhaustive-test (map drug-name (database-drugs drug-database))))
+  )
 
-; Manually test for debugging. We are expecting one of the above two valid prescriptions
-; that we found by exhaustive search of the power set (AC or ACD)
-(define (test-synthesis)
-  (define marc (patient 42 '(K) '(X Y))) ; Once more, for the cure...
-  (define-symbolic a b c d e boolean?)
-  (define all-drugs '(A B C D E))
-  (define check (curry verify-prescription drug-database marc))
-  (define (assignment->prescription assignment)
-    (map (λ (drug var) (if var drug #f)) all-drugs assignment))
-  (define symbolic-prescription
-    (assignment->prescription (list a b c d e)))
-  (define solution
-    (solve (assert (check symbolic-prescription))))
-  (match solution
-    [ (model assignment)
-      (printf "Synthesized a prescription: ~a\n" (evaluate symbolic-prescription solution)) ]
-    [ 'unsat
-      (println "Couldn't find a valid prescription!" )]))
-; (test-synthesis)
+(test-permutations)
 
 ; Generate a prescription for a patient from a database, without taking into account any
 ; existing prescription.
@@ -373,7 +363,7 @@
 
 (define (test-automated)
   (define marc (patient 42 '(K) '(X Y)))
-  (displayln (generate-prescription drug-database marc))) ; (A C)
+  (display-prescription (time (generate-prescription drug-database marc)))) ; (A C)
 
 (test-automated)
 
@@ -404,6 +394,6 @@
 ; Since Marc is already taking D, we expect to see ACD instead of the A C from before.
 (define (test-optimization)
   (define marc (patient 42 '(K) '(X Y)))
-  (displayln (optimized-prescription drug-database marc '(D)))) ; (A C D)
+  (display-prescription (time (optimized-prescription drug-database marc '(D))))) ; (A C D)
 
-; (test-optimization)
+(test-optimization)
