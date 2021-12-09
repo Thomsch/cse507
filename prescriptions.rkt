@@ -1,8 +1,9 @@
-#lang rosette/safe
+#lang rosette
 
 (require rosette/lib/destruct)
 
 (require "utils.rkt")
+; (output-smt #t) ; Debugging: output SMT formula to file.
 
 ;;; Prescription Verification and Synthesis Library ;;;
 
@@ -220,15 +221,10 @@
        ))
     ]))
 
-(define (debug message expr)
-  ; (printf "\t~a: ~a\n" message expr)
-  expr)
-
 ; Abstract over DB creation + syntax.
 (define (make-database #:drugs drugs #:conflicts conflicts #:treatments treatments)
   ; Optimize here to construct hash tables to reduce the amount of comparisons.
   (database drugs conflicts treatments))
-
 
 (define (lte a) (λ (b) (<= b a)))
 (define (gte a) (λ (b) (>= b a)))
@@ -236,7 +232,6 @@
 (define (any-allergy . as)
   (ALLERGY (λ (allergies)
              (ormap (curry contains? allergies) as)) ))
-
 
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
@@ -316,30 +311,25 @@
 
   (define-symbolic a b c d e boolean?)
 
+  (define all-drugs '(A B C D E))
   (define check (curry verify-prescription drug-database marc))
 
-  (define prescription
+  (define (assignment->prescription assignment)
     (filter-map
-     (λ (drug var) (if var drug #f))
-     '(A B C D E)
-     (list a b c d e)))
+     (λ (drug var) (if var drug #f)) all-drugs assignment))
 
-  ; (displayln (prescription))
-  ; (displayln (check (prescription)))
-
-  ; (displayln prescription)
-  ; (displayln (check prescription))
-  ; (displayln (check '(A C D)))
+  (define symbolic-prescription
+    (assignment->prescription (list a b c d e)))
 
   (define solution
-    (solve (begin
-             (assert (check prescription))
-             (printf "vc: ~a\n" (vc))
-             )))
+    (solve (assert (check symbolic-prescription))))
 
-  (displayln solution)
+  (match solution
+    [ (model assignment)
+      (printf "Synthesized a prescription: ~a\n" (evaluate symbolic-prescription solution)) ]
+    [ 'unsat
+      (println "Couldn't find a valid prescription!" )])
+
   )
 
-; (test)
-; (test-permutations)
 (test-synthesis)
