@@ -109,6 +109,10 @@
 ; the relations. (This may be a reasonable way to generate data-sets.)
 (struct database (drugs conflicts treatments))
 
+; Attempt to reduce the size of the symbolic union
+(define (prescription-contains prescription drug)
+  (contains? prescription drug))
+
 ; We can check if a prescription (defined as a set of drugs) satisfies a formula to
 ; constitute a valid treatment application for a given patient/ailment combination:
 (define (treats-ailment treatment patient prescription ailment)
@@ -127,7 +131,7 @@
                  [ (NOT c) (not (recurse c)) ]
                  [ (OR a b) (or (recurse a) (recurse b)) ]
                  [ (AND a b) (and (recurse a) (recurse b)) ]
-                 [ (list drugs ...) (andmap (curry contains? prescription) drugs) ]))
+                 [ (list drugs ...) (andmap (curry prescription-contains prescription) drugs) ]))
      (satisfies-formula prescription (treatment-formula treatment)))
    ))
 
@@ -179,8 +183,11 @@
           ; in the database and aggregate them together.
           (apply append
                  (map (λ (drug)
-                        (define found (findf (λ (elt) (eq? (drug-name elt) drug)) drugs))
-                        (if found (drug-requirements found) '()))
+                        (if drug
+                            (begin
+                              (define found (findf (λ (elt) (eq? (drug-name elt) drug)) drugs))
+                              (if found (drug-requirements found) '()))
+                            '()))
                       prescription)))
         ; (printf "\t\tpatient-requirements: ~a\n" requirements-list)
         (andmap (curry satisfies-requirement patient) requirements-list))
@@ -191,14 +198,15 @@
          (λ (a)
            (andmap
             (λ (b)
-              ; Query all of the relations from the database
-              (define relations (query-conflicts a b))
-              ; No pairs of drugs causes a conflicts.
-              (define result (not (ormap
-                                   (curry drugs-conflict patient prescription)
-                                   (map conflict-condition relations))))
-              ;  (printf "\t\trelation [~a <-> ~a] ~a => ~a\n" a b relations result)
-              result)
+              (or (not (and a b))
+                  ; Query all of the relations from the database
+                  (begin (define relations (query-conflicts a b))
+                         ; No pairs of drugs causes a conflicts.
+                         (define result (not (ormap
+                                              (curry drugs-conflict patient prescription)
+                                              (map conflict-condition relations))))
+                         ;  (printf "\t\trelation [~a <-> ~a] ~a => ~a\n" a b relations result)
+                         result)))
             prescription))
          prescription))
 
@@ -233,6 +241,16 @@
     (drug 'C  '() '())
     (drug 'D  '() '())
     (drug 'E  '() '())
+    (drug 'A1  '() '())
+    (drug 'B1  '() '())
+    (drug 'C1  '() '())
+    (drug 'D1  '() '())
+    (drug 'E1  '() '())
+    (drug 'A2  '() '())
+    (drug 'B2  '() '())
+    (drug 'C2  '() '())
+    (drug 'D2  '() '())
+    (drug 'E2  '() '())
     )
    #:conflicts ; conflict: two drug names and a condition
    (list
@@ -243,6 +261,14 @@
     (conflict 'A 'D (AND ; A and D conflict if the patient is less than age 50 and not taking C.
                      (REQUIREMENT (AGE (lte 50)))
                      (NOT 'C)))
+    (conflict 'A1 'B1 '())
+    (conflict 'A2 'B2 '())
+    (conflict 'B1 'C1 '())
+    (conflict 'B2 'C2 '())
+    (conflict 'C1 'D1 '())
+    (conflict 'C2 'D2 '())
+    (conflict 'D1 'E1 '())
+    (conflict 'D2 'E2 '())
     )
    #:treatments ; treatement: ailments treated, patient requirements, drug formula
    (list
@@ -251,6 +277,12 @@
     (treatment '(Y Z) '() '(C A)) ; Drug C treats ailments Y and Z when used with A.
     (treatment '(W) '() '(D)) ; Drug D treats ailment W unconditionally.
     (treatment '(U) '() '(E (OR B C))) ; Drug E treats ailment U if used with B or C.
+
+    (treatment '(X1) '() '(A1))
+    (treatment '(Y1) (list (AGE (gte 2))) '(B1))
+    (treatment '(Y1 Z1) '() '(C1 A1))
+    (treatment '(W1) '() '(D1))
+    (treatment '(U1) '() '(E1 (OR B1 C1)))
     )))
 
 
@@ -268,13 +300,16 @@
   (displayln (verify-prescription drug-database marc possible-prescription-4))
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
 
-; (test)
+(test)
+
+(define (display-prescription prescription)
+  (displayln (filter identity prescription)))
 
 ; For testing purposes, we want to see if our verifier returns true/false on any
 ; possible permutation of input prescriptions. While this is mostly intended to make sure
 ; our verifier code doesn't crash, it also makes sense as an exhaustive search. This search
 ; is exponential in the size of the database, which is where the solver comes in.
-(define (test-permutations)
+(define (exhaustive-test all-drugs)
   (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
 
   ; Lightly modified from:
@@ -284,36 +319,31 @@
         (let ([rst (powerset (rest aL))])
           (append (map (λ (x) (cons (first aL) x)) rst) rst))))
 
-  (define all-possible-prescriptions (powerset '(A B C D E)))
-  (define check (curry verify-prescription drug-database marc))
+  (define all-possible-prescriptions
+    (map (λ (ps)
+           (map (λ (drug) (find ps drug)) all-drugs))
+         (powerset all-drugs)))
+
+  ;  (printf "Generated powerset of size ~a\n" (length all-possible-prescriptions))
+
+  (define (check prescription)
+    (define result (verify-prescription drug-database marc prescription))
+    ; (printf "~a: ~a\n" prescription result)
+    result)
 
   (define valid-prescriptions
-    (filter check all-possible-prescriptions))
+    (map (curry filter identity)
+         (filter check all-possible-prescriptions)))
   ; And indeed, we see that only ACD and AC are valid prescriptions :)
-  (printf "VALID PRESCRIPTIONS: ~a\n" valid-prescriptions))
+  (print-upto 5 "Exhaustive search" valid-prescriptions))
 
-; (test-permutations)
+(define (test-permutations)
+  (time (exhaustive-test '(A B C D E)))
+  ; Uncomment this test for benchmarking (warning: takes a while!)
+  ; (time (exhaustive-test (map drug-name (database-drugs drug-database))))
+  )
 
-; Manually test for debugging. We are expecting one of the above two valid prescriptions
-; that we found by exhaustive search of the power set (AC or ACD)
-(define (test-synthesis)
-  (define marc (patient 42 '(K) '(X Y))) ; Once more, for the cure...
-  (define-symbolic a b c d e boolean?)
-  (define all-drugs '(A B C D E))
-  (define check (curry verify-prescription drug-database marc))
-  (define (assignment->prescription assignment)
-    (filter-map
-     (λ (drug var) (if var drug #f)) all-drugs assignment))
-  (define symbolic-prescription
-    (assignment->prescription (list a b c d e)))
-  (define solution
-    (solve (assert (check symbolic-prescription))))
-  (match solution
-    [ (model assignment)
-      (printf "Synthesized a prescription: ~a\n" (evaluate symbolic-prescription solution)) ]
-    [ 'unsat
-      (println "Couldn't find a valid prescription!" )]))
-; (test-synthesis)
+(test-permutations)
 
 ; Generate a prescription for a patient from a database, without taking into account any
 ; existing prescription.
@@ -323,8 +353,7 @@
   (define symbolic-variables (map new-variable all-drugs))
   (define check (curry verify-prescription drug-database patient))
   (define symbolic-prescription
-    (filter-map
-     (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
+    (map (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
   (define solution
     (solve (assert (check symbolic-prescription))))
   (match solution
@@ -334,7 +363,7 @@
 
 (define (test-automated)
   (define marc (patient 42 '(K) '(X Y)))
-  (displayln (generate-prescription drug-database marc))) ; (A C)
+  (display-prescription (time (generate-prescription drug-database marc)))) ; (A C)
 
 (test-automated)
 
@@ -345,8 +374,7 @@
   (define symbolic-variables (map new-variable all-drugs))
   (define check (curry verify-prescription drug-database patient))
   (define symbolic-prescription
-    (filter-map
-     (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
+    (map (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
 
   ; We take a pairwise distance between our symbolic variables and current assignment.
   (define current-variables
@@ -366,6 +394,6 @@
 ; Since Marc is already taking D, we expect to see ACD instead of the A C from before.
 (define (test-optimization)
   (define marc (patient 42 '(K) '(X Y)))
-  (displayln (optimized-prescription drug-database marc '(D)))) ; (A C D)
+  (display-prescription (time (optimized-prescription drug-database marc '(D))))) ; (A C D)
 
 (test-optimization)
