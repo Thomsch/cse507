@@ -221,7 +221,7 @@
     ]))
 
 (define (debug message expr)
-  (printf "\t~a: ~a\n" message expr)
+  ; (printf "\t~a: ~a\n" message expr)
   expr)
 
 ; Abstract over DB creation + syntax.
@@ -342,4 +342,4 @@
 
 ; (test)
 ; (test-permutations)
-; (test-synthesis)
+(test-synthesis)
