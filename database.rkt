@@ -132,6 +132,7 @@
     ))
 
 (define side-effects '(
+    Alopecia
     Arythimia
     Cancer
     Constipation
@@ -146,7 +147,153 @@
     Internal-bleeding
     Nausea
     Suicidal-thoughts
+    Fatigue
+    Muscle-stiffness
+    Joint-stiffness
+
     ))
 
-;;; (for ([(group i) (in-indexed ailements)])
-;;;   (printf "~a. ~a\n" (add1 i) group))
+;;; A list of 142 property of drugs (!)
+;;; The list was compiled from https://www.drugs.com/drug-classes.html, I removed some of them
+;;; to avoid duplicates and uninteresting entries.
+(define drug-properties '(
+    5-alpha-reductase-inhibitor
+    ACE-inhibitors
+    adamantane-antiviral
+    adrenal-cortical-steroid
+    adrenergic-bronchodilator
+    alkylating-agent
+    allergenic
+    alpha-glucosidase-inhibitor
+    amebicide
+    aminoglycoside
+    aminopenicillin
+    aminosalicylate
+    analgesic
+    angiotensin-receptor-blocker
+    anorexiant
+    sedative
+    hypnotic
+    aromatase-inhibitor
+    bacterial vaccines
+    barbiturate
+    benzodiazepine
+    beta-blocker
+    biological
+    bisphosphonate
+    bronchodilator
+    BTK-inhibitor
+    calcimimetic
+    calcineurin-inhibitor
+    calcitonin
+    calcium-channel-blocking-agent
+    carbamate-anticonvulsant
+    carbapenem
+    carbonic-anhydrase-inhibitor
+    cardiac-stressing-agent
+    cardioselective-beta-blocker
+    cardiovascular-agent
+    catecholamine
+    CD20-monoclonal-antibody
+    CD30-monoclonal-antibody
+    CD33-monoclonal-antibody
+    CD38-monoclonal-antibody
+    CD52-monoclonal-antibody
+    cephalosporin
+    cerumenolytic
+    CGRP-inhibitor
+    chelating-agent
+    chloride-channel-activator
+    cholesterol-absorption-inhibitor
+    cholinergic-muscle-stimulant
+    cholinesterase-inhibitor
+    CNS-stimulant
+    coagulation-modifier
+    contraceptive
+    corticotropin
+    cox-2-inhibitor
+    decongestant
+    digestive-enzyme
+    diuretic
+    echinocandins
+    EGFR-inhibitor
+    estrogen
+    expectorant
+    gastrointestinal-agent
+    general-anesthetic
+    glucocorticoid
+    glycylcycline
+    growth-hormone
+    H2-antagonist
+    hedgehog-pathway-inhibitor
+    heparin
+    HER2-inhibitor
+    hydantoin-anticonvulsants
+    immunostimulant
+    immunosuppressant
+    inotropic
+    insulin
+    interleukin
+    intravenous
+    ketolide
+    laxative
+    leprostatic
+    macrolide
+    meglitinide
+    metabolic
+    methylxanthine
+    mineralocorticoid
+    mitotic inhibitor
+    mouth-and-throat-product
+    mTOR-inhibitor
+    mucolytics
+    multikinase inhibitors
+    muscle relaxants
+    mydriatics
+    narcotic
+    NHE3-inhibitor
+    NS5A-inhibitors
+    nutritional-product
+    ophthalmic-anesthetic
+    ophthalmic-anti-infective
+    ophthalmic-anti-inflammatory
+    ophthalmic-glaucoma
+    ophthalmic-steroid
+    oxazolidinone
+    PARP-inhibitor
+    PCSK9-inhibitor
+    penicillin
+    phenothiazine-antiemetic
+    phenothiazine-antipsychotic
+    PI3K-inhibitor
+    plasma-expander
+    probiotic
+    psychotherapeutic
+    psychotherapeutic 
+    quinolone
+    radiocontrast-agent
+    renin-inhibitor
+    respiratory-agent
+    salicylate
+    sclerosing-agent
+    SGLT-2 inhibitor
+    muscle-relaxant
+    spermicide
+    statin
+    sulfonamide
+    sulfonylurea
+    tetracyclic-antidepressant
+    thiazide-diuretic
+    thrombolytic
+    thyroid-drug
+    tocolytic-agent
+    topical-agent
+    vasodilator
+    vasopressor
+    VEGF/VEGFR-inhibitor
+    vitamin
+    VMAT2-inhibitor
+))
+
+(for ([(group i) (in-indexed drug-properties)])
+  (printf "~a. ~a\n" (add1 i) group))
