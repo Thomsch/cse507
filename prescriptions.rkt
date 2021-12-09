@@ -306,34 +306,29 @@
 
 ; (test-permutations)
 
-(define (test-synthesis) ; MANUAL TEST
+; Manually test for debugging. We are expecting one of the above two valid prescriptions
+; that we found by exhaustive search of the power set (AC or ACD)
+(define (test-synthesis)
   (define marc (patient 42 '(K) '(X Y))) ; Once more, for the cure...
-
   (define-symbolic a b c d e boolean?)
-
   (define all-drugs '(A B C D E))
   (define check (curry verify-prescription drug-database marc))
-
   (define (assignment->prescription assignment)
     (filter-map
      (λ (drug var) (if var drug #f)) all-drugs assignment))
-
   (define symbolic-prescription
     (assignment->prescription (list a b c d e)))
-
   (define solution
     (solve (assert (check symbolic-prescription))))
-
   (match solution
     [ (model assignment)
       (printf "Synthesized a prescription: ~a\n" (evaluate symbolic-prescription solution)) ]
     [ 'unsat
-      (println "Couldn't find a valid prescription!" )])
-  )
+      (println "Couldn't find a valid prescription!" )]))
+; (test-synthesis)
 
-(test-synthesis)
-
-; FULLY AUTOMATIC TEST
+; Generate a prescription for a patient from a database, without taking into account any
+; existing prescription.
 (define (generate-prescription database patient)
   (define (new-variable name) (define-symbolic* name boolean?) name)
   (define all-drugs (map drug-name (database-drugs database)))
@@ -351,6 +346,38 @@
 
 (define (test-automated)
   (define marc (patient 42 '(K) '(X Y)))
-  (displayln (generate-prescription drug-database marc)))
+  (displayln (generate-prescription drug-database marc))) ; (A C)
 
 (test-automated)
+
+; Optimize a prescription modification that minimizes the change from an existing prescription.
+(define (optimized-prescription database patient existing-prescription)
+  (define (new-variable name) (define-symbolic* name boolean?) name)
+  (define all-drugs (map drug-name (database-drugs database)))
+  (define symbolic-variables (map new-variable all-drugs))
+  (define check (curry verify-prescription drug-database patient))
+  (define symbolic-prescription
+    (filter-map
+     (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
+
+  ; We take a pairwise distance between our symbolic variables and current assignment.
+  (define current-variables
+    (map (λ (drug) (contains? existing-prescription drug)) all-drugs))
+  (define symbolic-distance
+    (foldl + 0 (map (λ (v1 v2) (if (eq? v1 v2) 0 1)) current-variables symbolic-variables)))
+
+  (define solution
+    (optimize
+     #:minimize (list symbolic-distance)
+     #:guarantee (assert (check symbolic-prescription))))
+  (match solution
+    [ (model assignment)
+      (evaluate symbolic-prescription solution) ]
+    [ 'unsat ??? ]))
+
+; Since Marc is already taking D, we expect to see ACD instead of the A C from before.
+(define (test-optimization)
+  (define marc (patient 42 '(K) '(X Y)))
+  (displayln (optimized-prescription drug-database marc '(D)))) ; (A C D)
+
+(test-optimization)
