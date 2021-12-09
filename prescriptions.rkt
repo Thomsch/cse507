@@ -43,22 +43,24 @@
 ;   *conjunction* of all requirements in the list.
 (struct drug (name requirements properties) #:transparent)
 
+; A requirement can be any of following, where `f` is a predicate takes in
+; a patient's information and returns true or false:
+(struct AGE (f))
+(struct ALLERGY (f))
+(struct BLOOD-PRESSURE (f)) ; ... and so on.
+
 ; A known treatment has
 ; - A list of one or more ailments it treats
 ; - A set of requirements about the patient to be applicable
 ; - A formula depicting a drug combination that treats the ailments, i.e.
-;     drug A, drug A /\ drug B, drug A /\ (drug B \/ drug C), etc.
+;     drug A, drug A /\ drug B, drug A /\ (drug B \/ (has-property 'ACE-inhibitor)), etc.
 (struct treatment (ailments requirements formula))
 
+; A formula literal can either be a specific drug, or it can be function that takes as input the
+; drug's property list and returns true or false if the properties are satisfied. A property in
+; a formula is considered to be true if any of the drugs satisfy the property.
+(struct PROPERTY (f))
 
-; A requirement can be any of following, where `f` is a predicate takes in
-; a patient's information and returns true or false:
-
-(struct AGE (f))
-(struct ALLERGY (f))
-(struct NOT (requirement))
-(struct AND (a b))
-(struct OR (a b))
 
 ; This definition admits the following verifier:
 (define (satisfies-requirement patient requirement)
@@ -75,11 +77,19 @@
 ; if the condition is true for a given patient and drug list.
 (struct conflict (A B condition) #:transparent)
 
-; A condition extends the `requirement` type with the ability to specify
-; other drugs, which are interepreted as "true" values if the patient is taking a
-; drug of that name. For example:
-; '(drug-name)
+; A condition extends the `requirement` type with the ability to specify drugs as
+; literals, which are interepreted as "true" values if the patient is taking a drug of
+; that name. For example:
+;     'REQUIREMENT(older-than 2) \/ (B C)
+; says that the patient is be older than 2 or prescribed both B and C.
+; Note that conditions are used in *conflicts*, so the drugs conflict when a condition is *true*
 (struct REQUIREMENT (r))
+
+
+; We also expose boolean combinations for requirements, conditions, and formulas.
+(struct NOT (a))
+(struct AND (a b))
+(struct OR (a b))
 
 ; Together, these admit the following verifier, which verifies if two
 ; drugs conflict given a patient and existing series of drugs.
@@ -109,30 +119,32 @@
 ; the relations. (This may be a reasonable way to generate data-sets.)
 (struct database (drugs conflicts treatments))
 
-; Attempt to reduce the size of the symbolic union
-(define (prescription-contains prescription drug)
-  (contains? prescription drug))
 
 ; We can check if a prescription (defined as a set of drugs) satisfies a formula to
-; constitute a valid treatment application for a given patient/ailment combination:
-(define (treats-ailment treatment patient prescription ailment)
+; constitute a valid treatment application. Here, prescription is a list of names (or false)
+; and treatment drugs is a list of #struct drug (or false)
+(define (satisfies-treatment-formula treatment-drugs prescription formula)
+  (define recurse (curry satisfies-treatment-formula prescription))
+  (destruct formula
+            [ (PROPERTY f)
+              (ormap (λ (d) (and d (f (drug-properties d))) treatment-drugs))]
+            [ (NOT c) (not (recurse c)) ]
+            [ (OR a b) (or (recurse a) (recurse b)) ]
+            [ (AND a b) (and (recurse a) (recurse b)) ]
+            [ (list drugs ...) (andmap (curry contains? prescription) drugs) ]))
+
+; Also, check whether a treatment applies to a given patient/ailment combination:
+(define (treats-ailment all-drugs treatment patient prescription ailment)
   (and
    ; The ailment is actually contained within the list of ailments this treatment treats
    (contains? (treatment-ailments treatment) ailment)
-
    ; Patients satisfy all of the requirements for the treatment to apply
    (andmap (curry satisfies-requirement patient) (treatment-requirements treatment))
 
    ; The prescription actually satisfied the treatment's requirements.
    (begin
-     (define (satisfies-formula prescription formula)
-       (define recurse (curry satisfies-formula prescription))
-       (destruct formula
-                 [ (NOT c) (not (recurse c)) ]
-                 [ (OR a b) (or (recurse a) (recurse b)) ]
-                 [ (AND a b) (and (recurse a) (recurse b)) ]
-                 [ (list drugs ...) (andmap (curry prescription-contains prescription) drugs) ]))
-     (satisfies-formula prescription (treatment-formula treatment)))
+     (define treatment-drugs (map (λ (d) (and d (find all-drugs d))) prescription))
+     (satisfies-treatment-formula treatment-drugs prescription (treatment-formula treatment)))
    ))
 
 
@@ -173,7 +185,7 @@
         (andmap
          (λ (ailment)
            (ormap (λ (treatment)
-                    (treats-ailment treatment patient prescription ailment))
+                    (treats-ailment drugs treatment patient prescription ailment))
                   treatments))
          ailments))
 
