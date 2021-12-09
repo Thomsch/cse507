@@ -306,7 +306,7 @@
 
 ; (test-permutations)
 
-(define (test-synthesis)
+(define (test-synthesis) ; MANUAL TEST
   (define marc (patient 42 '(K) '(X Y))) ; Once more, for the cure...
 
   (define-symbolic a b c d e boolean?)
@@ -329,7 +329,28 @@
       (printf "Synthesized a prescription: ~a\n" (evaluate symbolic-prescription solution)) ]
     [ 'unsat
       (println "Couldn't find a valid prescription!" )])
-
   )
 
 (test-synthesis)
+
+; FULLY AUTOMATIC TEST
+(define (generate-prescription database patient)
+  (define (new-variable name) (define-symbolic* name boolean?) name)
+  (define all-drugs (map drug-name (database-drugs database)))
+  (define symbolic-variables (map new-variable all-drugs))
+  (define check (curry verify-prescription drug-database patient))
+  (define symbolic-prescription
+    (filter-map
+     (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
+  (define solution
+    (solve (assert (check symbolic-prescription))))
+  (match solution
+    [ (model assignment)
+      (evaluate symbolic-prescription solution) ]
+    [ 'unsat ??? ]))
+
+(define (test-automated)
+  (define marc (patient 42 '(K) '(X Y)))
+  (displayln (generate-prescription drug-database marc)))
+
+(test-automated)
