@@ -1,7 +1,6 @@
 #lang rosette
 
 (require rosette/lib/destruct)
-(require racket/trace)
 (require "utils.rkt")
 
 ; (output-smt #t) ; Debugging: output SMT formula to file.
@@ -213,7 +212,6 @@
                               (if found (drug-requirements found) '()))
                             '()))
                       prescription)))
-        ; (printf "\t\tpatient-requirements: ~a\n" requirements-list)
         (andmap (curry satisfies-requirement patient) requirements-list))
 
       ; Futher optimization: fast exit on first failure since we know it's inconsistent.
@@ -397,12 +395,10 @@
            (map (λ (drug) (find ps drug)) all-drugs))
          (powerset all-drugs)))
 
-  ;  (printf "Generated powerset of size ~a\n" (length all-possible-prescriptions))
+  (debug "Generated powerset of size ~a\n" (length all-possible-prescriptions))
 
   (define (check prescription)
-    (define result (verify-prescription drug-database marc prescription))
-    ; (printf "~a: ~a\n" prescription result)
-    result)
+    (verify-prescription drug-database marc prescription))
 
   (define valid-prescriptions
     (map (curry filter identity)
