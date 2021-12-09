@@ -62,7 +62,6 @@
 
 ; This definition admits the following verifier:
 (define (satisfies-requirement patient requirement)
-  ; (printf "SATISFIES? ~a\n" requirement)
   (define recurse (curry satisfies-requirement patient))
   (destruct requirement
             [ (AGE f) (f (patient-age patient))]
@@ -87,25 +86,15 @@
 ; (Note, this does not check if adding either of the two drugs to the
 ;  medications list would cause conflicts to occur with any there.)
 (define (drugs-conflict patient medications condition)
-  ; (printf "\t\tConflict? ~a\n" condition)
   (define recurse (curry drugs-conflict patient medications))
-  (define result
-    (destruct condition
-              [ (REQUIREMENT r) ; (displayln "\t\t\tREQUIREMENT")
-                (satisfies-requirement patient r) ]
-              [ (NOT c) ; (displayln "\t\t\tNOT")
-                (not (recurse c)) ]
-              [ (OR a b) ; (displayln "\t\t\tOR")
-                (or (recurse a) (recurse b)) ]
-              [ (AND a b) ; (displayln "\t\t\tAND")
-                (and (recurse a) (recurse b))  ]
-              [ (list drugs ...)
-                ; (displayln "\t\t\tGENERIC")
-                (andmap (curry contains? medications) drugs) ]
-              [ drug (contains? medications drug) ]
-              ))
-  ; (printf "\t\t\tResult ~a: ~a\n" condition result)
-  result)
+  (destruct condition
+            [ (REQUIREMENT r) (satisfies-requirement patient r) ]
+            [ (NOT c)  (not (recurse c)) ]
+            [ (OR a b) (or (recurse a) (recurse b)) ]
+            [ (AND a b) (and (recurse a) (recurse b))  ]
+            [ (list drugs ...) (andmap (curry contains? medications) drugs) ]
+            [ drug (contains? medications drug) ]
+            ))
 
 ; A drug database contains our "universe" of information -- these
 ; are all of the drugs we know about, all of the known conflicts
@@ -281,11 +270,14 @@
 
 ; (test)
 
+; For testing purposes, we want to see if our verifier returns true/false on any
+; possible permutation of input prescriptions. While this is mostly intended to make sure
+; our verifier code doesn't crash, it also makes sense as an exhaustive search. This search
+; is exponential in the size of the database, which is where the solver comes in.
 (define (test-permutations)
   (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
 
-  ; For testing purposes, we want to see if our verifier returns true/false on any
-  ; possible permutation of input prescriptions. Lightly modified from:
+  ; Lightly modified from:
   ; https://stackoverflow.com/questions/20622945/how-to-do-a-powerset-in-drracket/20623487
   (define (powerset aL)
     (if (empty? aL) '(())
@@ -296,40 +288,84 @@
   (define check (curry verify-prescription drug-database marc))
 
   (define valid-prescriptions
-    (filter (λ (p)
-              (define result (check p))
-              (printf "~a: ~a\n" p result)
-              result)
-            all-possible-prescriptions))
+    (filter check all-possible-prescriptions))
   ; And indeed, we see that only ACD and AC are valid prescriptions :)
   (printf "VALID PRESCRIPTIONS: ~a\n" valid-prescriptions))
 
 ; (test-permutations)
 
+; Manually test for debugging. We are expecting one of the above two valid prescriptions
+; that we found by exhaustive search of the power set (AC or ACD)
 (define (test-synthesis)
   (define marc (patient 42 '(K) '(X Y))) ; Once more, for the cure...
-
   (define-symbolic a b c d e boolean?)
-
   (define all-drugs '(A B C D E))
   (define check (curry verify-prescription drug-database marc))
-
   (define (assignment->prescription assignment)
     (filter-map
      (λ (drug var) (if var drug #f)) all-drugs assignment))
-
   (define symbolic-prescription
     (assignment->prescription (list a b c d e)))
-
   (define solution
     (solve (assert (check symbolic-prescription))))
-
   (match solution
     [ (model assignment)
       (printf "Synthesized a prescription: ~a\n" (evaluate symbolic-prescription solution)) ]
     [ 'unsat
-      (println "Couldn't find a valid prescription!" )])
+      (println "Couldn't find a valid prescription!" )]))
+; (test-synthesis)
 
-  )
+; Generate a prescription for a patient from a database, without taking into account any
+; existing prescription.
+(define (generate-prescription database patient)
+  (define (new-variable name) (define-symbolic* name boolean?) name)
+  (define all-drugs (map drug-name (database-drugs database)))
+  (define symbolic-variables (map new-variable all-drugs))
+  (define check (curry verify-prescription drug-database patient))
+  (define symbolic-prescription
+    (filter-map
+     (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
+  (define solution
+    (solve (assert (check symbolic-prescription))))
+  (match solution
+    [ (model assignment)
+      (evaluate symbolic-prescription solution) ]
+    [ 'unsat ??? ]))
 
-(test-synthesis)
+(define (test-automated)
+  (define marc (patient 42 '(K) '(X Y)))
+  (displayln (generate-prescription drug-database marc))) ; (A C)
+
+(test-automated)
+
+; Optimize a prescription modification that minimizes the change from an existing prescription.
+(define (optimized-prescription database patient existing-prescription)
+  (define (new-variable name) (define-symbolic* name boolean?) name)
+  (define all-drugs (map drug-name (database-drugs database)))
+  (define symbolic-variables (map new-variable all-drugs))
+  (define check (curry verify-prescription drug-database patient))
+  (define symbolic-prescription
+    (filter-map
+     (λ (drug var) (if var drug #f)) all-drugs symbolic-variables))
+
+  ; We take a pairwise distance between our symbolic variables and current assignment.
+  (define current-variables
+    (map (λ (drug) (contains? existing-prescription drug)) all-drugs))
+  (define symbolic-distance
+    (foldl + 0 (map (λ (v1 v2) (if (eq? v1 v2) 0 1)) current-variables symbolic-variables)))
+
+  (define solution
+    (optimize
+     #:minimize (list symbolic-distance)
+     #:guarantee (assert (check symbolic-prescription))))
+  (match solution
+    [ (model assignment)
+      (evaluate symbolic-prescription solution) ]
+    [ 'unsat ??? ]))
+
+; Since Marc is already taking D, we expect to see ACD instead of the A C from before.
+(define (test-optimization)
+  (define marc (patient 42 '(K) '(X Y)))
+  (displayln (optimized-prescription drug-database marc '(D)))) ; (A C D)
+
+(test-optimization)
