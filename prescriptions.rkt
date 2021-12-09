@@ -322,7 +322,7 @@
     ; Any vasodilator and any vasopressor unconditionally conflict.
     (conflict-class (has-property 'vasodilator) (has-property 'vasopressor) '())
 
-    ; Any ACE inhibitor and any beta blocker conflict if the patient is allergic to K.
+    ; Any ACE inhibitor and any diuretic conflict if the patient is allergic to K.
     (conflict-class
      (has-property 'ACE-Inhibitor)
      (has-property 'diuretic)
@@ -350,7 +350,7 @@
 
     ; This treatment works if the patient isn't allergic to M
     (treatment '(X1) (list (no-allergy 'M))
-               ; The treatement requires at least one drug in each property.
+               ; The treatment requires at least one drug in each property.
                ; Note: this is *different* than saying (has-property 'A B),
                ;       which would require one single drug to have both properties.
                (AND (has-property 'ACE-Inhibitor) (has-property 'beta-blocker)))
