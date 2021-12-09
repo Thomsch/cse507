@@ -1,7 +1,7 @@
 #lang rosette
 
 (require rosette/lib/destruct)
-(output-smt #t)
+; (output-smt #t)
 
 (require "utils.rkt")
 
@@ -165,12 +165,6 @@
     (begin
       (define ailments (patient-ailments patient))
 
-      (define (query-drugs selector)
-        (define all-results (map (λ (name)
-                                   (selector (car (hash-ref drugs name))))
-                                 prescription))
-        (apply append all-results))
-
       ; Note: naive implementation scans the whole conflict list, instead we probably want
       ; something with a dictionary that looks over just the conflicts of A.
       ; Since `conflicts(A,B) <=> conflicts(B,A)`, we can safely ignore the case where a
@@ -191,7 +185,15 @@
          ailments))
 
       (define (patient-compatible)
-        (define requirements-list (query-drugs drug-requirements))
+        (define requirements-list
+          ; For each drug in the prescription, find the requirements for the drug with the same name
+          ; in the database and aggregate them together.
+          (apply append
+                 (map (λ (drug)
+                        (define found (findf (λ (elt) (eq? (drug-name elt) drug)) drugs))
+                        (if found (drug-requirements found) '()))
+                      prescription)))
+        ; (printf "\t\tpatient-requirements: ~a\n" requirements-list)
         (andmap (curry satisfies-requirement patient) requirements-list))
 
       ; Futher optimization: fast exit on first failure since we know it's inconsistent.
@@ -220,16 +222,13 @@
     ]))
 
 (define (debug message expr)
-  ; (printf "\t~a: ~a\n" message expr)
+  (printf "\t~a: ~a\n" message expr)
   expr)
 
 ; Abstract over DB creation + syntax.
 (define (make-database #:drugs drugs #:conflicts conflicts #:treatments treatments)
   ; Optimize here to construct hash tables to reduce the amount of comparisons.
-  (define (drug-table)
-    (define assocs (map (λ (d) (list (drug-name d) d)) drugs))
-    (make-hash assocs))
-  (database (drug-table) conflicts treatments))
+  (database drugs conflicts treatments))
 
 
 (define (lte a) (λ (b) (<= b a)))
@@ -286,7 +285,7 @@
   (displayln (verify-prescription drug-database marc possible-prescription-4))
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
 
-(test)
+; (test)
 
 (define (test-permutations)
   (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
@@ -302,7 +301,6 @@
   (define all-possible-prescriptions (powerset '(A B C D E)))
   (define check (curry verify-prescription drug-database marc))
 
-
   (define valid-prescriptions
     (filter (λ (p)
               (define result (check p))
@@ -312,4 +310,37 @@
   ; And indeed, we see that only ACD and AC are valid prescriptions :)
   (printf "VALID PRESCRIPTIONS: ~a\n" valid-prescriptions))
 
-(test-permutations)
+; (test-permutations)
+
+(define (test-synthesis)
+  (define marc (patient 42 '(K) '(X Y))) ; Once more, for the cure...
+
+  (define-symbolic a b c d e boolean?)
+
+  (define check (curry verify-prescription drug-database marc))
+
+  (define prescription
+    (filter-map
+     (λ (drug var) (if var drug #f))
+     '(A B C D E)
+     (list a b c d e)))
+
+  ; (displayln (prescription))
+  ; (displayln (check (prescription)))
+
+  ; (displayln prescription)
+  ; (displayln (check prescription))
+  ; (displayln (check '(A C D)))
+
+  (define solution
+    (solve (begin
+             (assert (check prescription))
+             (printf "vc: ~a\n" (vc))
+             )))
+
+  (displayln solution)
+  )
+
+; (test)
+; (test-permutations)
+(test-synthesis)
