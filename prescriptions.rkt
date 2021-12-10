@@ -49,7 +49,7 @@ gte
 ; - a set of unconditional requirements that must be met about
 ; the patient's conditions.
 ; - an unstructured list of properties that can be referenced when defining
-; treatements programatically. Properties are usually symbols (e.g. 'ACE-Inhibitor, 'Diuretic)
+; treatments programatically. Properties are usually symbols (e.g. 'ACE-Inhibitor, 'Diuretic)
 ;
 ; Notes:
 ; - We treat the list of requirements as a syntactic convenience for providing a
@@ -349,7 +349,7 @@ gte
     (conflict 'D2 'E2 '())
     )
 
-   #:treatments ; treatement: ailments treated, patient requirements, drug formula
+   #:treatments ; treatment: ailments treated, patient requirements, drug formula
    (list
     (treatment '(X) '() '(A)) ; Drug A treats ailment X unconditionally.
     (treatment '(Y) (list (older-than 2)) '(B)) ; Drug B treats ailment Y if the patient is over age 2.
