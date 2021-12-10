@@ -19,7 +19,7 @@
 
    #:treatments ; treatment: ailments treated, patient requirements, drug formula
    (list
-    (treatment '(Asthma) (list (AGE (gte 10))) '(Fasenra)) ; Drug Fasenra treats Asthma if patient is over age 10.
+    (treatment '(Asthma) (list (older-than 10)) '(Fasenra)) ; Drug Fasenra treats Asthma if patient is over age 10.
     )))
 
 (define (example-1)
