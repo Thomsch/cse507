@@ -397,6 +397,9 @@
                (AND (has-property 'ACE-Inhibitor) (has-property 'beta-blocker)))
     )))
 
+
+
+
 ; Verification test
 (define (test)
   (define marc (patient 42 '(K) '(X Y)))
@@ -413,6 +416,9 @@
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
 
 ;;; (test)
+
+
+
 
 ; Generate a prescription for a patient from a database, without taking into account any
 ; existing prescription.
@@ -443,6 +449,9 @@
   )
 
 ;;; (test-automated)
+
+
+
 
 ; Optimize a prescription modification that minimizes the change from an existing prescription.
 (define (optimized-prescription database patient existing-prescription)
