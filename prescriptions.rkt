@@ -285,6 +285,49 @@
 (define (has-property . ps)
   (PROPERTY (λ (properties) (andmap (curry contains? properties) ps))))
 
+
+(define (display-prescription prescription)
+  (displayln (filter identity prescription)))
+
+; For testing purposes, we want to see if our verifier returns true/false on any
+; possible permutation of input prescriptions. While this is mostly intended to make sure
+; our verifier code doesn't crash, it also makes sense as an exhaustive search. This search
+; is exponential in the size of the database, which is where the solver comes in.
+(define (exhaustive-test all-drugs)
+  (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
+
+  ; Lightly modified from:
+  ; https://stackoverflow.com/questions/20622945/how-to-do-a-powerset-in-drracket/20623487
+  (define (powerset aL)
+    (if (empty? aL) '(())
+        (let ([rst (powerset (rest aL))])
+          (append (map (λ (x) (cons (first aL) x)) rst) rst))))
+
+  (define all-possible-prescriptions
+    (map (λ (ps)
+           (map (λ (drug) (find ps drug)) all-drugs))
+         (powerset all-drugs)))
+
+  (debug "Generated powerset of size ~a\n" (length all-possible-prescriptions))
+
+  (define (check prescription)
+    (verify-prescription drug-database marc prescription))
+
+  (define valid-prescriptions
+    (map (curry filter identity)
+         (filter check all-possible-prescriptions)))
+  ; And indeed, we see that only ACD and AC are valid prescriptions :)
+  (print-upto 5 "Exhaustive search" valid-prescriptions))
+
+(define (test-permutations)
+  (time (exhaustive-test '(A B C D E)))
+  ; Uncomment this test for benchmarking (warning: takes a while!)
+  ; (time (exhaustive-test (map drug-name (database-drugs drug-database))))
+  )
+
+; (test-permutations)
+
+
 ; TODO: define a global database, or generate them on the fly from
 ;  random data and random global properties (see above)
 (define drug-database
@@ -354,7 +397,7 @@
                (AND (has-property 'ACE-Inhibitor) (has-property 'beta-blocker)))
     )))
 
-
+; Verification test
 (define (test)
   (define marc (patient 42 '(K) '(X Y)))
   (define possible-prescription-1 '(A B))   ; Conflict
@@ -369,48 +412,7 @@
   (displayln (verify-prescription drug-database marc possible-prescription-4))
   (displayln (verify-prescription drug-database marc possible-prescription-5)))
 
-; (test)
-
-(define (display-prescription prescription)
-  (displayln (filter identity prescription)))
-
-; For testing purposes, we want to see if our verifier returns true/false on any
-; possible permutation of input prescriptions. While this is mostly intended to make sure
-; our verifier code doesn't crash, it also makes sense as an exhaustive search. This search
-; is exponential in the size of the database, which is where the solver comes in.
-(define (exhaustive-test all-drugs)
-  (define marc (patient 42 '(K) '(X Y))) ; Our (ailing) hero returns!
-
-  ; Lightly modified from:
-  ; https://stackoverflow.com/questions/20622945/how-to-do-a-powerset-in-drracket/20623487
-  (define (powerset aL)
-    (if (empty? aL) '(())
-        (let ([rst (powerset (rest aL))])
-          (append (map (λ (x) (cons (first aL) x)) rst) rst))))
-
-  (define all-possible-prescriptions
-    (map (λ (ps)
-           (map (λ (drug) (find ps drug)) all-drugs))
-         (powerset all-drugs)))
-
-  (debug "Generated powerset of size ~a\n" (length all-possible-prescriptions))
-
-  (define (check prescription)
-    (verify-prescription drug-database marc prescription))
-
-  (define valid-prescriptions
-    (map (curry filter identity)
-         (filter check all-possible-prescriptions)))
-  ; And indeed, we see that only ACD and AC are valid prescriptions :)
-  (print-upto 5 "Exhaustive search" valid-prescriptions))
-
-(define (test-permutations)
-  (time (exhaustive-test '(A B C D E)))
-  ; Uncomment this test for benchmarking (warning: takes a while!)
-  ; (time (exhaustive-test (map drug-name (database-drugs drug-database))))
-  )
-
-; (test-permutations)
+;;; (test)
 
 ; Generate a prescription for a patient from a database, without taking into account any
 ; existing prescription.
