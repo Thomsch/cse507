@@ -2,7 +2,7 @@
 
 (require "prescriptions.rkt")
 
-(define toy-database
+(define drug-database
   (make-database
    #:drugs ; drug: name, patient requirements, properties
    (list
@@ -22,15 +22,15 @@
     (treatment '(Asthma) (list (older-than 10)) '(Fasenra)) ; Drug Fasenra treats Asthma if patient is over age 10.
     )))
 
-(define (example-1)
+(define (example)
   (define jessie (patient 26 '(Cephalosporin) '(Asthma))) ; Jessie is 26, is allergic to Cephalosporin, and has Asthma
   (define baseline-prescription '(Fasenra))
   (define prescription-1 '(Fasenra Vitamax)) ; Conflict because Jessie is allergic to Cephalosporin.
   (define prescription-2 '(Fasenra UltraVitamin)) ; No conflict! Jessie can use this!
 
-  (displayln (verify-prescription toy-database jessie baseline-prescription)) ; #t
-  (displayln (verify-prescription toy-database jessie prescription-1)) ; #f
-  (displayln (verify-prescription toy-database jessie prescription-2)) ; #t
+  (displayln (verify-prescription drug-database jessie baseline-prescription)) ; #t
+  (displayln (verify-prescription drug-database jessie prescription-1)) ; #f
+  (displayln (verify-prescription drug-database jessie prescription-2)) ; #t
 )
 
-(example-1)
+(example)
