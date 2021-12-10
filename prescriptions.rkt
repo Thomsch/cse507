@@ -440,7 +440,7 @@
   (display-prescription (time (generate-prescription drug-database jane))) ; (A1 E1)
   )
 
-(test-automated)
+;;; (test-automated)
 
 ; Optimize a prescription modification that minimizes the change from an existing prescription.
 (define (optimized-prescription database patient existing-prescription)
@@ -471,4 +471,4 @@
   (define marc (patient 42 '(K) '(X Y)))
   (display-prescription (time (optimized-prescription drug-database marc '(D))))) ; (A C D)
 
-(test-optimization)
+;;; (test-optimization)
