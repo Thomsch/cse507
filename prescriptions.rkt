@@ -1,20 +1,9 @@
 #lang rosette
 
-(provide 
-make-database
-verify-prescription
-drug
-conflict
-patient
-treatment
-any-allergy
-REQUIREMENT
-AGE
-gte
-)
-
 (require rosette/lib/destruct)
 (require "utils.rkt")
+
+(provide  (all-defined-out))
 
 ; (output-smt #t) ; Debugging: output SMT formula to file.
 
