@@ -289,8 +289,6 @@
 (define (display-prescription prescription)
   (displayln (filter identity prescription)))
 
-; (test-permutations)
-
 ; Generate a prescription for a patient from a database, without taking into account any
 ; existing prescription.
 (define (generate-prescription database patient)

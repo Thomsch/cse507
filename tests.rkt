@@ -110,6 +110,8 @@
 
 (test-optimization)
 
+
+(displayln "\n~~~ Exhaustive Search ~~~")
 ; For testing purposes, we want to see if our verifier returns true/false on any
 ; possible permutation of input prescriptions. While this is mostly intended to make sure
 ; our verifier code doesn't crash, it also makes sense as an exhaustive search. This search
@@ -143,5 +145,7 @@
 (define (test-permutations)
   (time (exhaustive-test '(A B C D E)))
   ; Uncomment this test for benchmarking (warning: takes a while!)
-  ; (time (exhaustive-test (map drug-name (database-drugs drug-database))))
+  (time (exhaustive-test (map drug-name (database-drugs drug-database))))
   )
+
+(test-permutations)
