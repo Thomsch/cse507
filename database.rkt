@@ -294,6 +294,3 @@
     vitamin
     VMAT2-inhibitor
 ))
-
-(for ([(group i) (in-indexed drug-properties)])
-  (printf "~a. ~a\n" (add1 i) group))
