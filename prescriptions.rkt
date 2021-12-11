@@ -5,7 +5,7 @@
 
 (provide  (all-defined-out))
 
-; (output-smt #t) ; Debugging: output SMT formula to file.
+;;; (output-smt #t) ; Debugging: output SMT formula to file.
 
 ;;; Prescription Verification and Synthesis Library ;;;
 
