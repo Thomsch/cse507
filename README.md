@@ -1,7 +1,11 @@
 # Verifiable Prescriptions in Rosette
 ## How to run the tool
-- The test cases are in `tests.rkt`. Run the file to see the verifier, synthesis, and optimizer in action.
-- Each of the following files have one example each. Run the files to run the example. The example files are `hypertension.rkt`, `asthma.rkt`.
+To run the tool, run any of the Racket files below. `tests.rkt` gives an overview of each feature (i.e., verification, synthesis, optimization) as well as detailed commentary for guidance.
+- `asthma.rkt`
+- `hypertension.rkt`
+- `tests.rkt`
+- `moredrugs.rkt`
+- `moreconflicts.rkt`
 
 ## Authors
 Dhruv Yadav, Thomas Schweizer, Dan Cascaval
