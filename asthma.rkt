@@ -28,9 +28,9 @@
   (define prescription-1 '(Fasenra Vitamax)) ; Conflict because Jessie is allergic to Cephalosporin.
   (define prescription-2 '(Fasenra UltraVitamin)) ; No conflict! Jessie can use this!
 
-  (displayln (verify-prescription drug-database jessie baseline-prescription)) ; #t
+  (displayln (time (verify-prescription drug-database jessie baseline-prescription))) ; #t
   (displayln (time (verify-prescription drug-database jessie prescription-1))) ; #f (conflict)
-  (displayln (verify-prescription drug-database jessie prescription-2)) ; #t (no conflict)
+  (displayln (time (verify-prescription drug-database jessie prescription-2))) ; #t (no conflict)
   (display-prescription (time (generate-prescription drug-database jessie))) ; Returns 'Fasenra to treat the asthma
   (display-prescription (time (optimized-prescription drug-database jessie '(Fasenra UltraVitamin Vitamax)))) ;  Returns '(Fasenra UltraVitamin) because Vitamax is not advisable
 )
